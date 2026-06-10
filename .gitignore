@@ -1,0 +1,6 @@
+.build/
+.swiftpm/
+package-lock.json
+Package.resolved
+.DS_Store
+.benchmarkBaselines/

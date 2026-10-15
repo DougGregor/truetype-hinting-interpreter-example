@@ -1,7 +1,9 @@
+public import BasicContainers
+
 // Stub types modeling the C structures consumed by the interpreter, for standalone compilation.
 
 /// Maximum profile table from the TrueType `maxp` table.
-public struct sfntMaxProfileTable {
+public struct sfntMaxProfileTable: Sendable {
   public var version: Int32
   public var numGlyphs: UInt16
   public var maxPoints: UInt16
@@ -53,22 +55,25 @@ public struct sfntMaxProfileTable {
   }
 }
 
-// SAFETY: C-interop stub whose fields are raw pointers managed by the caller. Marked @unsafe
-// because safe use requires the caller to initialize all pointer fields before access.
 /// Element type representing a zone's outline data.
-@unsafe public struct fnt_ElementType {
+///
+/// The point arrays are parallel; each must hold at least `maxPointCount` elements, and the
+/// contour arrays (`sp`, `ep`) at least `maxContourCount` elements. The interpreter checks
+/// these requirements when it wraps an element in a zone. The arrays are uniquely owned, so an
+/// element can't be copied and the interpreter's access to it never triggers a copy.
+public struct fnt_ElementType: ~Copyable {
   public var contourCount: Int32 = 0
   public var pointCount: Int32 = 0
-  public var x: UnsafeMutablePointer<Int32>!  // Scaled hinted points
-  public var y: UnsafeMutablePointer<Int32>!  // Scaled hinted points
-  public var sp: UnsafeMutablePointer<UInt16>!  // Start points
-  public var ep: UnsafeMutablePointer<UInt16>!  // End points
-  public var onCurve: UnsafeMutablePointer<UInt8>!  // On/off curve flags
-  public var f: UnsafeMutablePointer<UInt8>!  // Internal flags
-  public var ox: UnsafeMutablePointer<Int32>!  // Scaled unhinted points
-  public var oy: UnsafeMutablePointer<Int32>!  // Scaled unhinted points
-  public var oox: UnsafeMutablePointer<Int16>!  // Unscaled unhinted points
-  public var ooy: UnsafeMutablePointer<Int16>!  // Unscaled unhinted points
+  public var x: UniqueArray<Int32> = .init()  // Scaled hinted points
+  public var y: UniqueArray<Int32> = .init()  // Scaled hinted points
+  public var sp: UniqueArray<UInt16> = .init()  // Start points
+  public var ep: UniqueArray<UInt16> = .init()  // End points
+  public var onCurve: UniqueArray<UInt8> = .init()  // On/off curve flags
+  public var f: UniqueArray<UInt8> = .init()  // Internal flags
+  public var ox: UniqueArray<Int32> = .init()  // Scaled unhinted points
+  public var oy: UniqueArray<Int32> = .init()  // Scaled unhinted points
+  public var oox: UniqueArray<Int16> = .init()  // Unscaled unhinted points
+  public var ooy: UniqueArray<Int16> = .init()  // Unscaled unhinted points
   public var glyphIndex: Int32 = 0
   public var maxContourCount: Int32 = 0
   public var maxPointCount: Int32 = 0

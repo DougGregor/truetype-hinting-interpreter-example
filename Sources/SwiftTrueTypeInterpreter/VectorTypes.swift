@@ -384,3 +384,6 @@ extension SwiftTrueTypeInterpreter.OutlineCoord {
     .init(x: self.x.mixedMulRoundingToNearestOrUp(other.x), y: self.y.mixedMulRoundingToNearestOrUp(other.y))
   }
 }
+
+extension SwiftTrueTypeInterpreter.FixedCoord: Sendable where Fixed: Sendable {}
+extension SwiftTrueTypeInterpreter.FixedVector: Sendable where Fixed: Sendable {}

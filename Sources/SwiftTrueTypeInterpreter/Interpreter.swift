@@ -66,10 +66,8 @@ public class SwiftTrueTypeInterpreter {
 
     var storageArea: StorageArea
     var variationCoord: RigidArray<F2Dot14>
-    // Wrapping `Zone`s carry the lifetime of their `Ref<fnt_ElementType>` (set by the
-    // caller of `runProgram` via `UnsafeMutablePointer.ref`); empty `Zone`s carry the
-    // lifetime of their `anchoredBy:` argument. `State.init` composes both into `self`,
-    // so the whole `State` is bounded by the shorter of those scopes.
+    // Wrapping `Zone`s carry the lifetime of their exclusive borrow of the caller's
+    // `fnt_ElementType`; empty `Zone`s are immortal. `State.init` composes both into `self`.
     var _twilightZone: Zone
     var _glyphZone: Zone
     var unscaledOutlineIsWrong: Bool
@@ -114,7 +112,7 @@ public class SwiftTrueTypeInterpreter {
       swap(&interp.variationCoord, &variationCoord)
     }
 
-    func rollbackGlyphZone() {
+    mutating func rollbackGlyphZone() {
       if self._glyphZone.isPresent { self._glyphZone.rollback() }
     }
 
@@ -214,32 +212,25 @@ public class SwiftTrueTypeInterpreter {
 
   /// Exports interpreter parameters to parameter block.
   ///
-  /// - Parameter parBlock: Pointer to parameter block to update
+  /// - Parameter parBlock: Parameter block to update
   /// - Returns: Whether parameters should be written back to default block
-  ///
-  /// # Safety
-  /// Caller must ensure `parBlock` points to valid, initialized memory for a `fnt_ParameterBlock`
-  /// and remains valid for the duration of this call.
   @discardableResult
   public func export(
-    parBlock: UnsafeMutablePointer<fnt_ParameterBlock>
+    parBlock p: inout fnt_ParameterBlock
   ) -> Bool {
-    // SAFETY: Caller guarantees `parBlock` validity per documented contract
-    unsafe parBlock.withPointee { p in
-      p.wTCI = _cvt.controlValueCutIn.bitPattern
-      p.sWCI = _cvt.singleWidthCutIn.bitPattern
-      p.scaledSW = _cvt.singleWidthValue.fUnits.bitPattern
-      p.scanControl = .init(bitPattern: _gs.scanControl.rawValue)
-      p.instructControl = .init(_gs.instructControl.rawValue)
-      p.minimumDistance = _gs.minimumDistance.bitPattern
-      p.period45 = F2Dot30(_gs.roundState.period45).bitPattern
-      p.period = .init(_gs.roundState.period.bitPattern)
-      p.phase = .init(_gs.roundState.phase.bitPattern)
-      p.threshold = .init(_gs.roundState.threshold.bitPattern)
-      p.deltaBase = _gs.deltaBase
-      p.deltaShift = _gs.deltaShift
-      p.autoFlip = (_gs.autoFlip ? 1 : 0)
-    }
+    p.wTCI = _cvt.controlValueCutIn.bitPattern
+    p.sWCI = _cvt.singleWidthCutIn.bitPattern
+    p.scaledSW = _cvt.singleWidthValue.fUnits.bitPattern
+    p.scanControl = .init(bitPattern: _gs.scanControl.rawValue)
+    p.instructControl = .init(_gs.instructControl.rawValue)
+    p.minimumDistance = _gs.minimumDistance.bitPattern
+    p.period45 = F2Dot30(_gs.roundState.period45).bitPattern
+    p.period = .init(_gs.roundState.period.bitPattern)
+    p.phase = .init(_gs.roundState.phase.bitPattern)
+    p.threshold = .init(_gs.roundState.threshold.bitPattern)
+    p.deltaBase = _gs.deltaBase
+    p.deltaShift = _gs.deltaShift
+    p.autoFlip = (_gs.autoFlip ? 1 : 0)
     return !_gs.instructControl.contains(.default)
   }
 
@@ -252,42 +243,33 @@ public class SwiftTrueTypeInterpreter {
   private var _cvt: ControlValueTable  // set by caller before runPrep
   /// Sets control value table from external data.
   ///
-  /// - Parameters:
-  ///   - pointer: Pointer to CVT data
-  ///   - count: Number of CVT entries
-  ///
-  /// # Safety
-  /// Caller must ensure `pointer` is valid for reads of `count * MemoryLayout<Int32>.stride` bytes
-  /// and remains valid for the duration of this call.
-  public func setCVT(_ pointer: UnsafePointer<Int32>, count: Int) {
-    // SAFETY: Caller guarantees `pointer` validity and `count` accuracy per documented contract
-    let span = unsafe Span(_unsafeStart: pointer, count: count)
-    _cvt.setValues(span.reinterpret(as: ControlValue.self))
+  /// - Parameter values: `F26Dot6` bit patterns of the CVT entries
+  public func setCVT(_ values: Span<Int32>) {
+    _cvt.setValues(bitPatterns: values)
   }
 
   var variationCoord: RigidArray<F2Dot14>
   /// Sets variation coordinates for font variations.
   ///
-  /// - Parameters:
-  ///   - pointer: Pointer to coordinate data (nullable)
-  ///   - count: Number of coordinates
-  ///
-  /// # Safety
-  /// If `pointer` is non-nil, caller must ensure it is valid for reads of `count * MemoryLayout<CShort>.stride` bytes
-  /// and remains valid for the duration of this call.
-  public func setVariationCoord(_ pointer: UnsafePointer<CShort>?, count: Int) {
+  /// - Parameter coords: `F2Dot14` bit patterns of the coordinates
+  public func setVariationCoord(_ coords: Span<CShort>) {
+    variationCoord.removeAll()
+    if variationCoord.capacity < coords.count {
+      variationCoord.reallocate(capacity: coords.count)
+    }
+    for index in coords.indices {
+      variationCoord.append(F2Dot14(bitPattern: coords[index]))
+    }
+  }
+
+  /// Sets `count` variation coordinates, all zero.
+  public func setNullVariationCoord(count: Int) {
+    variationCoord.removeAll()
     if variationCoord.capacity < count {
       variationCoord.reallocate(capacity: count)
     }
-    variationCoord.removeAll()
-    // SAFETY: When non-nil, caller guarantees `pointer` validity and `count` accuracy per documented contract
-    if let pointer = unsafe pointer {
-      let span = unsafe Span(_unsafeStart: pointer, count: count)
-      variationCoord.append(copying: span.reinterpret(as: F2Dot14.self))
-    } else if count > 0 {
-      for _ in 0..<count {
-        variationCoord.append(.zero)
-      }
+    for _ in 0..<max(count, 0) {
+      variationCoord.append(.zero)
     }
   }
 
@@ -329,7 +311,7 @@ public class SwiftTrueTypeInterpreter {
   }
 
   public func setCVTValues(_ values: [F26Dot6]) {
-    _cvt.setValues(values.span.reinterpret(as: ControlValue.self))
+    _cvt.setValues(values.span)
   }
 
   public func stackView() -> [Int32] {
@@ -364,73 +346,101 @@ public class SwiftTrueTypeInterpreter {
 
   // MARK: - Run entry points
 
-  /// Runs TrueType programs (fpgm, prep, or glyf).
+  /// Runs TrueType programs (fpgm, prep, or glyf) with no zones.
   ///
   /// - Parameters:
-  ///   - fpgm: Font program bytecode (nullable)
-  ///   - fpgmCount: Length of font program
-  ///   - prep: Control value program bytecode (nullable)
-  ///   - prepCount: Length of control value program
-  ///   - glyf: Glyph program bytecode (nullable)
-  ///   - glyfCount: Length of glyph program
-  ///   - twilightElement: Twilight zone data (nullable)
-  ///   - glyphElement: Glyph zone data (nullable)
+  ///   - fpgm: Font program bytecode (empty if none)
+  ///   - prep: Control value program bytecode (empty if none)
+  ///   - glyf: Glyph program bytecode (empty if none)
   ///   - unscaledOutlineIsWrong: Whether unscaled outline needs correction
   ///   - parBlock: Parameter block for configuration
-  ///
-  /// # Safety
-  /// Caller must ensure for all non-nil pointer parameters:
-  /// - `fpgm` (if non-nil): valid for reads of `fpgmCount` bytes
-  /// - `prep` (if non-nil): valid for reads of `prepCount` bytes
-  /// - `glyf` (if non-nil): valid for reads of `glyfCount` bytes
-  /// - `twilightElement` (if non-nil): valid `fnt_ElementType`
-  /// - `glyphElement` (if non-nil): valid `fnt_ElementType`
-  /// - `parBlock`: valid initialized `fnt_ParameterBlock`
-  ///
-  /// A valid `fnt_ElementType` satisfies the following requirements:
-  /// - `maxPointCount`/`pointCount`, `maxContourCount`/`contourCount` are accurate
-  ///   and `pointCount ≤ maxPointCount`, `contourCount ≤ maxContourCount`.
-  /// - `x`, `y`, `ox`, `oy`, `oox`, `ooy`, `onCurve`, and `f` point at parallel
-  ///   arrays of length ≥ `maxPointCount`.
-  /// - `sp`, `ep` point at arrays of length ≥ `maxContourCount`.
-  /// 
-  /// All pointers must remain valid for the duration of this call.
-
   public func runProgram(
-    fpgm: UnsafePointer<UInt8>?,
-    fpgmCount: Int32,
-    prep: UnsafePointer<UInt8>?,
-    prepCount: Int32,
-    glyf: UnsafePointer<UInt8>?,
-    glyfCount: Int32,
-    twilightZone twilightElement: UnsafePointer<fnt_ElementType>?,
-    glyphZone glyphElement: UnsafePointer<fnt_ElementType>?,
+    fpgm: Span<UInt8>,
+    prep: Span<UInt8>,
+    glyf: Span<UInt8>,
     unscaledOutlineIsWrong: Bool,
-    parBlock: UnsafeMutablePointer<fnt_ParameterBlock>
+    parBlock: inout fnt_ParameterBlock
   ) throws {
-    // SAFETY: Caller guarantees validity of twilightElement per documented contract
-    let twilightZone: Zone =
-    unsafe twilightElement != nil
-      ? .twilightZone(wrapping: twilightElement.unsafelyUnwrapped.ref)
-      : .empty(.twilight, anchoredBy: self)
+    try run(
+      fpgm: fpgm, prep: prep, glyf: glyf,
+      twilightZone: .empty(.twilight), glyphZone: .empty(.glyph),
+      unscaledOutlineIsWrong: unscaledOutlineIsWrong, parBlock: &parBlock)
+  }
 
-    // SAFETY: Caller guarantees validity of glyphElement per documented contract
-    let glyphZone: Zone =
-    unsafe glyphElement != nil
-      ? .glyphZone(wrapping: glyphElement.unsafelyUnwrapped.ref)
-      : .empty(.glyph, anchoredBy: self)
+  /// Runs TrueType programs with a twilight zone only.
+  ///
+  /// See ``runProgram(fpgm:prep:glyf:unscaledOutlineIsWrong:parBlock:)``. The element must be
+  /// valid: its counts accurate (`pointCount ≤ maxPointCount`, `contourCount ≤
+  /// maxContourCount`) and its parallel arrays at least `maxPointCount` long (`sp` and `ep`:
+  /// `maxContourCount`). Invalid elements are rejected with a precondition failure.
+  public func runProgram(
+    fpgm: Span<UInt8>,
+    prep: Span<UInt8>,
+    glyf: Span<UInt8>,
+    twilightZone twilightElement: inout fnt_ElementType,
+    unscaledOutlineIsWrong: Bool,
+    parBlock: inout fnt_ParameterBlock
+  ) throws {
+    try run(
+      fpgm: fpgm, prep: prep, glyf: glyf,
+      twilightZone: .twilightZone(wrapping: &twilightElement), glyphZone: .empty(.glyph),
+      unscaledOutlineIsWrong: unscaledOutlineIsWrong, parBlock: &parBlock)
+  }
 
-    // SAFETY: Caller guarantees validity of all pointer parameters and accuracy of element counts per documented contract
-    let code = unsafe Code(
-      fpgm: UnsafeBufferPointer(start: fpgm, count: (fpgm != nil ? Int(fpgmCount) : 0)).span,
-      prep: UnsafeBufferPointer(start: prep, count: (prep != nil ? Int(prepCount) : 0)).span,
-      glyf: UnsafeBufferPointer(start: glyf, count: (glyf != nil ? Int(glyfCount) : 0)).span
-    )
+  /// Runs TrueType programs with a glyph zone only.
+  ///
+  /// See ``runProgram(fpgm:prep:glyf:twilightZone:unscaledOutlineIsWrong:parBlock:)`` for the
+  /// requirements on the element.
+  public func runProgram(
+    fpgm: Span<UInt8>,
+    prep: Span<UInt8>,
+    glyf: Span<UInt8>,
+    glyphZone glyphElement: inout fnt_ElementType,
+    unscaledOutlineIsWrong: Bool,
+    parBlock: inout fnt_ParameterBlock
+  ) throws {
+    try run(
+      fpgm: fpgm, prep: prep, glyf: glyf,
+      twilightZone: .empty(.twilight), glyphZone: .glyphZone(wrapping: &glyphElement),
+      unscaledOutlineIsWrong: unscaledOutlineIsWrong, parBlock: &parBlock)
+  }
+
+  /// Runs TrueType programs with both a twilight and a glyph zone.
+  ///
+  /// See ``runProgram(fpgm:prep:glyf:twilightZone:unscaledOutlineIsWrong:parBlock:)`` for the
+  /// requirements on the elements.
+  public func runProgram(
+    fpgm: Span<UInt8>,
+    prep: Span<UInt8>,
+    glyf: Span<UInt8>,
+    twilightZone twilightElement: inout fnt_ElementType,
+    glyphZone glyphElement: inout fnt_ElementType,
+    unscaledOutlineIsWrong: Bool,
+    parBlock: inout fnt_ParameterBlock
+  ) throws {
+    try run(
+      fpgm: fpgm, prep: prep, glyf: glyf,
+      twilightZone: .twilightZone(wrapping: &twilightElement),
+      glyphZone: .glyphZone(wrapping: &glyphElement),
+      unscaledOutlineIsWrong: unscaledOutlineIsWrong, parBlock: &parBlock)
+  }
+
+  private func run(
+    fpgm: Span<UInt8>,
+    prep: Span<UInt8>,
+    glyf: Span<UInt8>,
+    twilightZone: consuming Zone,
+    glyphZone: consuming Zone,
+    unscaledOutlineIsWrong: Bool,
+    parBlock: inout fnt_ParameterBlock
+  ) throws {
+    let code = Code(fpgm: fpgm, prep: prep, glyf: glyf)
+    let fpgmCount = fpgm.count
+    let prepCount = prep.count
+    let glyfCount = glyf.count
 
     if glyfCount > 0 {
-      // SAFETY: Caller guarantees validity of all pointer parameters
-      // and accuracy of element counts per documented contract
-      defer { unsafe export(parBlock: parBlock) }
+      defer { export(parBlock: &parBlock) }
       try execute(
         .glyf,
         code: code,
@@ -529,10 +539,10 @@ public class SwiftTrueTypeInterpreter {
     let p2index = try state.stack.pop().int()
     let p1index = try state.stack.pop().int()
     let p2 = try state.borrowZone(type: state.gs.zp0) { zone throws(InterpreterError) in
-      try zone.point(at: p2index).hinted()
+      try zone.hinted(at: p2index)
     }
     let p1 = try state.borrowZone(type: state.gs.zp1) { zone throws(InterpreterError) in
-      try zone.point(at: p1index).hinted()
+      try zone.hinted(at: p1index)
     }
 
     // Dotting against the projection vector gives the distance between those points along it.
@@ -544,14 +554,14 @@ public class SwiftTrueTypeInterpreter {
 
     try state.withZP1 { zp1, state throws(InterpreterError) in
       try zp1.check(against: state.maxp)
-      var pt = try zp1.point(at: p1index)
-      try state.gs.movePoint(point: &pt, delta: move)
+      let pt = try zp1.point(at: p1index)
+      try state.gs.movePoint(in: &zp1, point: pt, delta: move)
     }
 
     try state.withZP0 { zp0, state throws(InterpreterError) in
       try zp0.check(against: state.maxp)
-      var pt = try zp0.point(at: p2index)
-      try state.gs.movePoint(point: &pt, delta: move &- dist)
+      let pt = try zp0.point(at: p2index)
+      try state.gs.movePoint(in: &zp0, point: pt, delta: move &- dist)
     }
   }
 
@@ -562,7 +572,7 @@ public class SwiftTrueTypeInterpreter {
   ) throws(InterpreterError) {
     let rp0 = state.gs.rp0
     let p0 = try state.borrowZone(type: state.gs.zp0) { zone throws(InterpreterError) in
-      try zone.point(at: rp0).hinted()
+      try zone.hinted(at: rp0)
     }
     try state.withZP1 { zp1, state throws(InterpreterError) in
       try zp1.check(against: state.maxp)
@@ -571,9 +581,9 @@ public class SwiftTrueTypeInterpreter {
       let projVec = state.gs.projectionVector
       while state.gs.loop > 0 {
         let index = try state.stack.pop().int()
-        var pt = try zp1.point(at: index)
-        let proj = 0 &- projVec.dot(pt.hinted() &- p0)
-        try state.gs.movePoint(point: &pt, delta: proj)
+        let pt = try zp1.point(at: index)
+        let proj = 0 &- projVec.dot(zp1.hinted(pt) &- p0)
+        try state.gs.movePoint(in: &zp1, point: pt, delta: proj)
         state.gs.loop -= 1
       }
       state.gs.loop = 1
@@ -814,8 +824,8 @@ public class SwiftTrueTypeInterpreter {
       try zone.check(against: state.maxp)
       for _ in 0..<max(0, state.gs.loop) {
         let index = try state.stack.pop().int()
-        var pt = try zone.point(at: index)
-        pt.toggleOnCurve()
+        let pt = try zone.point(at: index)
+        zone.toggleOnCurve(pt)
       }
       state.gs.loop = 1
     }
@@ -855,9 +865,9 @@ public class SwiftTrueTypeInterpreter {
     let value: F26Dot6 = try state.borrowZone(type: state.gs.zp2) { zone throws(InterpreterError) in
       let pt = try zone.point(at: index)
       if originalPosition {
-        return state.gs.dualProjectionVector.dot(pt.scaled())
+        return state.gs.dualProjectionVector.dot(zone.scaled(pt))
       } else {
-        return state.gs.projectionVector.dot(pt.hinted())
+        return state.gs.projectionVector.dot(zone.hinted(pt))
       }
     }
     try state.stack.push(StackElement(value))
@@ -1045,12 +1055,12 @@ public class SwiftTrueTypeInterpreter {
     let (ref1Hinted, ref1Scaled, ref1Original): (OutlineCoord, OutlineCoord, UnscaledCoord) =
       try state.borrowZone(type: state.gs.zp0) { zone throws(InterpreterError) in
         let p = try zone.point(at: rp1)
-        return (p.hinted(), p.scaled(), p.original())
+        return (zone.hinted(p), zone.scaled(p), zone.original(p))
       }
     let (ref2Hinted, ref2Scaled, ref2Original): (OutlineCoord, OutlineCoord, UnscaledCoord) =
       try state.borrowZone(type: state.gs.zp1) { zone throws(InterpreterError) in
         let p = try zone.point(at: rp2)
-        return (p.hinted(), p.scaled(), p.original())
+        return (zone.hinted(p), zone.scaled(p), zone.original(p))
       }
 
     let oldRange: F26Dot6
@@ -1074,12 +1084,12 @@ public class SwiftTrueTypeInterpreter {
       let dualProjVec = state.gs.dualProjectionVector
       for _ in 0..<state.gs.loop {
         let idx = try state.stack.pop().int()
-        var pt = try zp2.point(at: idx)
+        let pt = try zp2.point(at: idx)
         var desiredProjection: F26Dot6
         if usesTwilightZone {
-          desiredProjection = dualProjVec.dot(pt.scaled() &- dualRefPoint)
+          desiredProjection = dualProjVec.dot(zp2.scaled(pt) &- dualRefPoint)
         } else {
-          let newCoord = OutlineCoord(bitPattern: pt.original())
+          let newCoord = OutlineCoord(bitPattern: zp2.original(pt))
           desiredProjection = dualProjVec.dot(newCoord &- dualRefPoint)
         }
 
@@ -1089,8 +1099,8 @@ public class SwiftTrueTypeInterpreter {
           desiredProjection = desiredProjection.mulDiv(currentRange, oldRange, rounding: .towardZero)
         }
 
-        let currentProjection = projVec.dot(pt.hinted() &- ref1Hinted)
-        try state.gs.movePoint(point: &pt, delta: desiredProjection &- currentProjection)
+        let currentProjection = projVec.dot(zp2.hinted(pt) &- ref1Hinted)
+        try state.gs.movePoint(in: &zp2, point: pt, delta: desiredProjection &- currentProjection)
       }
       state.gs.loop = 1
     }
@@ -1112,19 +1122,19 @@ public class SwiftTrueTypeInterpreter {
     let b0Idx = try state.stack.pop().int()
     let b1Idx = try state.stack.pop().int()
     let (a0, a1) = try state.borrowZone(type: state.gs.zp0) { zone throws(InterpreterError) in
-      try (zone.point(at: a0Idx).hinted(), zone.point(at: a1Idx).hinted())
+      try (zone.hinted(at: a0Idx), zone.hinted(at: a1Idx))
     }
     let (b0, b1) = try state.borrowZone(type: state.gs.zp1) { zone throws(InterpreterError) in
-      try (zone.point(at: b0Idx).hinted(), zone.point(at: b1Idx).hinted())
+      try (zone.hinted(at: b0Idx), zone.hinted(at: b1Idx))
     }
 
     try state.withZP2 { zone, state throws(InterpreterError) in
       let idx = try state.stack.pop().int()
-      var pt = try zone.point(at: idx)
+      let pt = try zone.point(at: idx)
 
       // unconditionally set both xMoved and yMoved like the C++ interpreter
       // does, then never bother to set xMoved/yMoved when storing the new position
-      pt.markMoved(x: true, y: true)
+      zone.markMoved(pt, x: true, y: true)
 
       /*
        * (1) Bx + dBx * t0 = Ax + dAx * t1
@@ -1155,14 +1165,14 @@ public class SwiftTrueTypeInterpreter {
       let d: F26Dot6
       if dAy == 0 {
         if dBx == 0 {
-          pt.setHinted(OutlineCoord(x: b1.x, y: a1.y))
+          zone.setHinted(pt, OutlineCoord(x: b1.x, y: a1.y))
           return
         }
         n = b1.y &- a1.y
         d = 0 &- dBy
       } else if dAx == 0 {
         if dBy == 0 {
-          pt.setHinted(OutlineCoord(x: a1.x, y: b1.y))
+          zone.setHinted(pt, OutlineCoord(x: a1.x, y: b1.y))
           return
         }
         n = b1.x &- a1.x
@@ -1183,15 +1193,15 @@ public class SwiftTrueTypeInterpreter {
         if n.magnitude < d.magnitude {
           /* "this is the normal case" */
           let t = fractDivide(n, d)
-          pt.setHinted(OutlineCoord(x: b1.x &+ fractMultiply(dBx, t), y: b1.y &+ fractMultiply(dBy, t)))
+          zone.setHinted(pt, OutlineCoord(x: b1.x &+ fractMultiply(dBx, t), y: b1.y &+ fractMultiply(dBy, t)))
         } else {
           /* "Oh well, invert t and use it instead" */
           let t = fractDivide(d, n)
-          pt.setHinted(OutlineCoord(x: b1.x &+ fractDivide(dBx, t), y: b1.y &+ fractDivide(dBy, t)))
+          zone.setHinted(pt, OutlineCoord(x: b1.x &+ fractDivide(dBx, t), y: b1.y &+ fractDivide(dBy, t)))
         }
       } else {
         // Degenerate case: parallel lines. Just find the midpoint of all 4 points.
-        pt.setHinted(OutlineCoord(
+        zone.setHinted(pt, OutlineCoord(
           x: (b1.x &+ (dBx / 2) &+ a1.x &+ (dAx / 2)) / 2,
           y: (b1.y &+ (dBy / 2) &+ a1.y &+ (dAy / 2)) / 2
         ))
@@ -1301,10 +1311,10 @@ public class SwiftTrueTypeInterpreter {
     let p1index = try state.stack.pop().int()
     if Opcode.MD.immediate(for: instruction) == 0 {
       let p1Hinted = try state.borrowZone(type: state.gs.zp0) { zone throws(InterpreterError) in
-        try zone.point(at: p1index).hinted()
+        try zone.hinted(at: p1index)
       }
       let p2Hinted = try state.borrowZone(type: state.gs.zp1) { zone throws(InterpreterError) in
-        try zone.point(at: p2index).hinted()
+        try zone.hinted(at: p2index)
       }
       try state.stack.push(StackElement(state.gs.projectionVector.dot(p1Hinted &- p2Hinted)))
     } else {
@@ -1312,10 +1322,10 @@ public class SwiftTrueTypeInterpreter {
         try state.correctUnscaledOutline()
       }
       let p1Original = try state.borrowZone(type: state.gs.zp0) { zone throws(InterpreterError) in
-        try zone.point(at: p1index).original()
+        try zone.original(at: p1index)
       }
       let p2Original = try state.borrowZone(type: state.gs.zp1) { zone throws(InterpreterError) in
-        try zone.point(at: p2index).original()
+        try zone.original(at: p2index)
       }
       // Bincompat: The reference interpreter uses unscaled points (int16) with F26.6 arithmetic.
       let distance = OutlineCoord(bitPattern: p1Original &- p2Original)
@@ -1333,12 +1343,12 @@ public class SwiftTrueTypeInterpreter {
     let idx = try state.stack.pop().int()
     try state.withZP0 { zp0, state throws(InterpreterError) in
       try zp0.check(against: state.maxp)
-      var pt = try zp0.point(at: idx)
+      let pt = try zp0.point(at: idx)
       state.gs.rp0 = idx
       state.gs.rp1 = idx
       let distance: F26Dot6
       if Opcode.MDAP.immediate(for: instruction) == 1 {
-        let currProj = state.gs.projectionVector.dot(pt.hinted())
+        let currProj = state.gs.projectionVector.dot(zp0.hinted(pt))
         let resultProj = state.gs.roundState.round(currProj)
         distance = resultProj &- currProj
       } else {
@@ -1348,7 +1358,7 @@ public class SwiftTrueTypeInterpreter {
       // BUG: MDAP is supposed to always set the xMoved/yMoved flag on the
       // non-zero axes of the projection vector, but the C++ implementation
       // relies on MovePoint doing it. We intentionally reproduce this bug.
-      try state.gs.movePoint(point: &pt, delta: distance)
+      try state.gs.movePoint(in: &zp0, point: pt, delta: distance)
     }
   }
 
@@ -1374,23 +1384,23 @@ public class SwiftTrueTypeInterpreter {
         let p = try zone.point(at: pt0Index)
         // Only one of `scaled` and `original` is used inside the loop, depending on
         // `usesTwilightZone`. Compute only the relevant one — saves the unused span loads.
-        let hinted = p.hinted()
+        let hinted = zone.hinted(p)
         let reference: OutlineCoord =
-          usesTwilightZone ? p.scaled() : OutlineCoord(bitPattern: p.original())
+          usesTwilightZone ? zone.scaled(p) : OutlineCoord(bitPattern: zone.original(p))
         return (hinted, reference)
       }
 
     try state.withZP1 { zp1, state throws(InterpreterError) in
       try zp1.check(against: state.maxp)
-      var pt = try zp1.point(at: pt1Index)
+      let pt = try zp1.point(at: pt1Index)
       var distanceToMove: F26Dot6
       if usesTwilightZone {
-        distanceToMove = state.gs.dualProjectionVector.dot(pt.scaled() &- pt0Reference)
+        distanceToMove = state.gs.dualProjectionVector.dot(zp1.scaled(pt) &- pt0Reference)
       } else {
         // Note: The reference interpreter reads unscaled points and treats them like F16.16 numbers
         // when they are in fact int16_t. This results in values that are 65536 times too small.
         // This code reproduces this behavior.
-        let stretched = OutlineCoord(bitPattern: pt.original()) &- pt0Reference
+        let stretched = OutlineCoord(bitPattern: zp1.original(pt)) &- pt0Reference
         if state.scaleFactors.unitsPerEmScale.x != state.scaleFactors.unitsPerEmScale.y {
           let scaled = stretched.mixedMulRoundingToNearestOrUp(state.scaleFactors.unitsPerEmScale)
           distanceToMove = state.gs.dualProjectionVector.dot(scaled)
@@ -1411,8 +1421,8 @@ public class SwiftTrueTypeInterpreter {
         biasNegative: distanceNegativeBeforeRounding
       )
 
-      distanceToMove &-= state.gs.projectionVector.dot(pt.hinted() &- pt0Hinted)
-      try state.gs.movePoint(point: &pt, delta: distanceToMove)
+      distanceToMove &-= state.gs.projectionVector.dot(zp1.hinted(pt) &- pt0Hinted)
+      try state.gs.movePoint(in: &zp1, point: pt, delta: distanceToMove)
 
       state.gs.rp1 = pt0Index
       state.gs.rp2 = pt1Index
@@ -1432,16 +1442,16 @@ public class SwiftTrueTypeInterpreter {
     let newProjection = try state.cvt.readEntry(entryIndex).stretched(by: state.effectiveCVTScale())
     try state.withZP0 { zp0, state throws(InterpreterError) in
       try zp0.check(against: state.maxp)
-      var pt = try zp0.point(at: pointIndex)
+      let pt = try zp0.point(at: pointIndex)
       let currentProjection: F26Dot6
       if state.gs.zp0 == .twilight {
         // movePoint below applies xMoved/yMoved.
         let updated = OutlineCoord(scaling: newProjection, by: state.gs.projectionVector)
-        pt.setHinted(updated)
-        pt.setScaled(updated)
+        zp0.setHinted(pt, updated)
+        zp0.setScaled(pt, updated)
         currentProjection = state.gs.projectionVector.dot(updated)
       } else {
-        currentProjection = state.gs.projectionVector.dot(pt.hinted())
+        currentProjection = state.gs.projectionVector.dot(zp0.hinted(pt))
       }
 
       // only set RP0, RP1 after we have been able to access the `pointIndex` point
@@ -1456,7 +1466,7 @@ public class SwiftTrueTypeInterpreter {
         )
       }
 
-      try state.gs.movePoint(point: &pt, delta: newProjection &- currentProjection)
+      try state.gs.movePoint(in: &zp0, point: pt, delta: newProjection &- currentProjection)
     }
   }
 
@@ -1499,22 +1509,22 @@ public class SwiftTrueTypeInterpreter {
     let (rpScaled, rpHinted): (OutlineCoord, OutlineCoord) =
       try state.borrowZone(type: state.gs.zp0) { zone throws(InterpreterError) in
         let p = try zone.point(at: rp0)
-        return (p.scaled(), p.hinted())
+        return (zone.scaled(p), zone.hinted(p))
       }
 
     distanceToMove = state.applySingleWidthCutIn(distanceToMove)
     try state.withZP1 { zp1, state throws(InterpreterError) in
       try zp1.check(against: state.maxp)
-      var pt = try zp1.point(at: pointIndex)
+      let pt = try zp1.point(at: pointIndex)
       let distanceBetweenPoints: F26Dot6
       if state.gs.zp1 == .twilight {
         let distance: FixedVector<F26Dot6> = .init(scaling: distanceToMove, by: state.gs.projectionVector)
-        pt.setScaled(rpScaled &+ distance)
-        pt.setHinted(rpHinted)
+        zp1.setScaled(pt, rpScaled &+ distance)
+        zp1.setHinted(pt, rpHinted)
         distanceBetweenPoints = distanceToMove
       } else {
         distanceBetweenPoints = state.gs.dualProjectionVector.dot(
-          pt.scaled() &- rpScaled
+          zp1.scaled(pt) &- rpScaled
         )
       }
 
@@ -1536,8 +1546,8 @@ public class SwiftTrueTypeInterpreter {
         biasNegative: distanceBetweenPoints < 0
       )
 
-      distanceToMove &-= state.gs.projectionVector.dot(pt.hinted() &- rpHinted)
-      try state.gs.movePoint(point: &pt, delta: distanceToMove)
+      distanceToMove &-= state.gs.projectionVector.dot(zp1.hinted(pt) &- rpHinted)
+      try state.gs.movePoint(in: &zp1, point: pt, delta: distanceToMove)
       state.gs.rp1 = rp0
       state.gs.rp2 = pointIndex
       if immediate & 0b10000 == 0b10000 {
@@ -1576,18 +1586,18 @@ public class SwiftTrueTypeInterpreter {
     let (refHinted, refScaled): (OutlineCoord, OutlineCoord) =
       try state.borrowZone(type: state.gs.zp0) { zone throws(InterpreterError) in
         let p = try zone.point(at: rp0)
-        return (p.hinted(), isTwilight ? p.scaled() : OutlineCoord(x: 0, y: 0))
+        return (zone.hinted(p), isTwilight ? zone.scaled(p) : OutlineCoord(x: 0, y: 0))
       }
     try state.withZP1 { zp1, state throws(InterpreterError) in
       try zp1.check(against: state.maxp)
-      var pt = try zp1.point(at: pointToModify)
+      let pt = try zp1.point(at: pointToModify)
       if isTwilight {
         let d = FixedVector<F26Dot6>(scaling: distanceValue, by: state.gs.projectionVector)
-        pt.setScaled(refScaled &+ d)
-        pt.setHinted(refHinted)
+        zp1.setScaled(pt, refScaled &+ d)
+        zp1.setHinted(pt, refHinted)
       }
-      let distanceBetweenPoints = state.gs.projectionVector.dot(pt.hinted() &- refHinted)
-      try state.gs.movePoint(point: &pt, delta: distanceValue &- distanceBetweenPoints)
+      let distanceBetweenPoints = state.gs.projectionVector.dot(zp1.hinted(pt) &- refHinted)
+      try state.gs.movePoint(in: &zp1, point: pt, delta: distanceValue &- distanceBetweenPoints)
     }
     state.gs.rp1 = rp0
     state.gs.rp2 = pointToModify
@@ -1879,16 +1889,16 @@ public class SwiftTrueTypeInterpreter {
 
     try state.withZP2 { zone, state throws(InterpreterError) in
       try zone.check(against: state.maxp)
-      var pt = try zone.point(at: pidx)
+      let pt = try zone.point(at: pidx)
       // gs.projectionVector.dot(p) is how much of the distance toward "coord" the point p has
       // already covered at its current position
       // subtracting that from coord is how much farther p has to be moved along proj vector
       // to reach distance "coord"
-      try state.gs.movePoint(point: &pt, delta: coord &- state.gs.projectionVector.dot(pt.hinted()))
+      try state.gs.movePoint(in: &zone, point: pt, delta: coord &- state.gs.projectionVector.dot(zone.hinted(pt)))
 
       // When in the twilight zone, the Cpp, FreeType, and MS interpreters update the unhinted coordinate.
       if state.gs.zp2 == .twilight {
-        pt.setScaled(pt.hinted())
+        zone.setScaled(pt, zone.hinted(pt))
       }
     }
   }
@@ -1922,14 +1932,14 @@ public class SwiftTrueTypeInterpreter {
       try state.borrowZone(type: state.gs.zp2) { zone throws(InterpreterError) in
         try zone.check(against: state.maxp)
         let p = try zone.point(at: p2Index)
-        return (p.hinted(), p.scaled())
+        return (zone.hinted(p), zone.scaled(p))
       }
 
     // Bincompat: zone1 is not checked by SDPVTL
     let (p1Hinted, p1Scaled): (OutlineCoord, OutlineCoord) =
       try state.borrowZone(type: state.gs.zp1) { zone throws(InterpreterError) in
         let p = try zone.point(at: p1Index)
-        return (p.hinted(), p.scaled())
+        return (zone.hinted(p), zone.scaled(p))
       }
 
     let projVec = computeUnitVector(
@@ -2010,7 +2020,7 @@ public class SwiftTrueTypeInterpreter {
      : (state.gs.rp2, state.gs.zp1))
     let proj = try state.borrowZone(type: referenceZoneType) { zone throws(InterpreterError) in
       let p = try zone.point(at: referencePoint)
-      return state.gs.projectionVector.dot(p.hinted() &- p.scaled())
+      return state.gs.projectionVector.dot(zone.hinted(p) &- zone.scaled(p))
     }
 
     let contourIndex = try state.stack.pop().int()
@@ -2023,8 +2033,8 @@ public class SwiftTrueTypeInterpreter {
 
       for index in contour {
         if index == referencePoint, zone.zoneType == referenceZoneType { continue }
-        var pt = try zone.point(at: index)
-        try state.gs.movePoint(point: &pt, delta: proj, ignoringOverflow: true)
+        let pt = try zone.point(at: index)
+        try state.gs.movePoint(in: &zone, point: pt, delta: proj, ignoringOverflow: true)
       }
     }
   }
@@ -2040,14 +2050,14 @@ public class SwiftTrueTypeInterpreter {
      : (state.gs.rp2, state.gs.zp1))
     let proj = try state.borrowZone(type: referenceZoneType) { zone throws(InterpreterError) in
       let p = try zone.point(at: referencePoint)
-      return state.gs.projectionVector.dot(p.hinted() &- p.scaled())
+      return state.gs.projectionVector.dot(zone.hinted(p) &- zone.scaled(p))
     }
 
     try state.withZP2 { zone, state throws(InterpreterError) in
       for _ in 0..<max(0, state.gs.loop) {
         let index = try state.stack.pop().int()
-        var pt = try zone.point(at: index)
-        try state.gs.movePoint(point: &pt, delta: proj, ignoringOverflow: true)
+        let pt = try zone.point(at: index)
+        try state.gs.movePoint(in: &zone, point: pt, delta: proj, ignoringOverflow: true)
       }
       // C++ implementation updates gs.loop only when everything succeeds (though every program resets loop anyway)
       state.gs.loop = 1
@@ -2069,9 +2079,9 @@ public class SwiftTrueTypeInterpreter {
     try state.withZP2 { zone, state throws(InterpreterError) in
       for _ in 0..<max(0, state.gs.loop) {
         let index = try state.stack.pop().int()
-        var pt = try zone.point(at: index)
-        pt.setHinted(pt.hinted() &+ delta)
-        pt.markMoved(x: xMoved, y: yMoved)
+        let pt = try zone.point(at: index)
+        zone.setHinted(pt, zone.hinted(pt) &+ delta)
+        zone.markMoved(pt, x: xMoved, y: yMoved)
       }
       state.gs.loop = 1
     }
@@ -2088,7 +2098,7 @@ public class SwiftTrueTypeInterpreter {
      : (state.gs.rp2, state.gs.zp1))
     let delta = try state.borrowZone(type: referenceZoneType) { zone throws(InterpreterError) in
       let p = try zone.point(at: referencePoint)
-      return state.gs.projectionVector.dot(p.hinted() &- p.scaled())
+      return state.gs.projectionVector.dot(zone.hinted(p) &- zone.scaled(p))
     }
     try state.withZP(type: state.popZoneType()) { zone, state throws(InterpreterError) in
       // UNDOCUMENTED: the C++ interpreter does not touch points that have an index
@@ -2122,9 +2132,9 @@ public class SwiftTrueTypeInterpreter {
           }
           flagY = flagY && index > referencePoint
         }
-        var pt = try zone.point(at: index)
-        pt.setHinted(pt.hinted() &+ d)
-        pt.markMoved(x: flagX, y: flagY)
+        let pt = try zone.point(at: index)
+        zone.setHinted(pt, zone.hinted(pt) &+ d)
+        zone.markMoved(pt, x: flagX, y: flagY)
       }
     }
   }
@@ -2316,8 +2326,8 @@ public class SwiftTrueTypeInterpreter {
     let index = try state.stack.pop().int()
     try state.withZP0 { zp0, state throws(InterpreterError) in
       try zp0.check(against: state.maxp)
-      var pt = try zp0.point(at: index)
-      pt.clearMoved(
+      let pt = try zp0.point(at: index)
+      zp0.clearMoved(pt, 
         x: state.gs.freedomVector.x != 0,
         y: state.gs.freedomVector.y != 0
       )
@@ -2460,8 +2470,8 @@ private func deltaMovePoint(state: inout State, phase: Int) throws(InterpreterEr
     try state.delta(pairCount: pairCount, elementsToPop: elementsToPop, phase: phase) {
       [maxp = state.maxp] gs, _, index, delta throws(InterpreterError) in
       try zp0.check(against: maxp)
-      var pt = try zp0.point(at: index)
-      try gs.movePoint(point: &pt, delta: delta)
+      let pt = try zp0.point(at: index)
+      try gs.movePoint(in: &zp0, point: pt, delta: delta)
     }
   }
 }
@@ -2478,18 +2488,15 @@ private func fliprg(_ state: inout State, onCurve: Bool) throws(InterpreterError
     }
 
     if max >= min {
-      var span = zone.mutableOnCurve()
       for index in min...max {
         if onCurve {
-          // SAFETY: `min` and `max` are validated against `0..<zone.maxPointCount` above,
-          // and `mutableOnCurve()` returns a span of length `maxPointCount`, so `index`
-          // is in bounds for `span`.
-          unsafe span[unchecked: index] |= Zone.Point.ONCURVE
+          // SAFETY: `min` and `max` are validated against `0..<zone.maxPointCount` above, and
+          // `onCurve` has at least `maxPointCount` elements, so `index` is in bounds.
+          unsafe zone.onCurve[unchecked: index] |= Zone.Point.ONCURVE
         } else {
-          // SAFETY: `min` and `max` are validated against `0..<zone.maxPointCount` above,
-          // and `mutableOnCurve()` returns a span of length `maxPointCount`, so `index`
-          // is in bounds for `span`.
-          unsafe span[unchecked: index] &= ~Zone.Point.ONCURVE
+          // SAFETY: `min` and `max` are validated against `0..<zone.maxPointCount` above, and
+          // `onCurve` has at least `maxPointCount` elements, so `index` is in bounds.
+          unsafe zone.onCurve[unchecked: index] &= ~Zone.Point.ONCURVE
         }
       }
     }
@@ -2639,92 +2646,109 @@ extension Zone {
         throw .invalidOperand  // Malformed font
       }
 
-      // Scope `points` to a single contour: AxisCoords holds an exclusive `&self` borrow
-      // for its lifetime, so re-creating it per contour leaves `self` free for the next
-      // iteration's `readContour` call. With `@inline(always)` on AxisCoords.init, the
-      // construction collapses to four span-pair stores per iteration.
-      var points = AxisCoords(zone: &self, axis: axis)
+      // Hand the spans of one axis to the per-contour interpolation. With `@inline(always)`,
+      // this collapses to four span-pair loads per iteration.
+      switch axis {
+      case .x:
+        Self.iupContour(contour, hinted: &x, scaled: ox.span, original: oox.span, flags: f.span, axis: axis)
+      case .y:
+        Self.iupContour(contour, hinted: &y, scaled: oy.span, original: ooy.span, flags: f.span, axis: axis)
+      }
+    }
+  }
 
-      guard var start = contour.first(where: { points.isMoved(at: $0) }) else { continue }
-      let finish = start
+  @inline(always) @_transparent
+  private static func iupContour(
+    _ contour: ClosedRange<Int>,
+    hinted: inout MutableSpan<Int32>,
+    scaled: Span<Int32>,
+    original: Span<Int16>,
+    flags: Span<UInt8>,
+    axis: Axis
+  ) {
+    func isMoved(_ index: Int) -> Bool {
+      flags[index] & axis.rawValue != 0
+    }
+
+    guard var start = contour.first(where: { isMoved($0) }) else { return }
+    let finish = start
+    repeat {
+      var end = start
       repeat {
-        var end = start
-        repeat {
-          end = end.incremented(wrappingWithin: contour)
-        } while !points.isMoved(at: end) && start != end
-        defer { start = end }
+        end = end.incremented(wrappingWithin: contour)
+      } while !isMoved(end) && start != end
+      defer { start = end }
 
-        guard var iter = UntouchedRangeIterator(range: contour, start: start, end: end) else { continue }
+      guard var iter = UntouchedRangeIterator(range: contour, start: start, end: end) else { continue }
 
-        let (lowPoint, highPoint) =
-        points.original[start] < points.original[end]
-        ? (start, end)
-        : (end, start)
+      let (lowPoint, highPoint) =
+      original[start] < original[end]
+      ? (start, end)
+      : (end, start)
 
-        let dx = points.hinted[lowPoint]
-        let dx1 = points.scaled[lowPoint]
-        let dx2 = Int32(points.original[lowPoint])
-        let high = points.scaled[highPoint]
-        let dhigh = points.hinted[highPoint] &- high
-        let tmp32 = points.hinted[highPoint] &- dx
-        let tmp32B = Int32(points.original[highPoint]) &- dx2
-        let low = dx1
-        let dlow = dx &- dx1
+      let dx = hinted[lowPoint]
+      let dx1 = scaled[lowPoint]
+      let dx2 = Int32(original[lowPoint])
+      let high = scaled[highPoint]
+      let dhigh = hinted[highPoint] &- high
+      let tmp32 = hinted[highPoint] &- dx
+      let tmp32B = Int32(original[highPoint]) &- dx2
+      let low = dx1
+      let dlow = dx &- dx1
 
-        if tmp32B != 0 {
-          if tmp32B <= Int32(Int16.max), tmp32 <= Int32(Int16.max) {
-            while let index = iter.next() {
-              var tmp32C = points.scaled[index]
-              if tmp32C <= low {
-                tmp32C &+= dlow
-              } else if tmp32C >= high {
-                tmp32C &+= dhigh
-              } else {
-                // The arithmetic below is intentionally performed using integer math (instead of fixed point)—
-                // from a fixed-point perspective, `corr` is applied to the unshifted product of two F26Dot6 values
-                // (in effect an F20Dot12) before the fractional part is corrected by division.
-                tmp32C = .init(points.original[index]) &- dx2
-                tmp32C &*= tmp32
-                tmp32C &+= tmp32B >> 1
-                tmp32C /= tmp32B
-                tmp32C &+= dx
-              }
-              points.hinted[index] = tmp32C
-            }
-          } else {
-            while let index = iter.next() {
-              var tmp32C = points.scaled[index]
-              if tmp32C <= low {
-                tmp32C &+= dlow
-              } else if tmp32C >= high {
-                tmp32C &+= dhigh
-              } else {
-                // Bincompat: The reference interpreter reinterpreted tmp32 and tmp32B as F16Dot16
-                // for the purpose of computing the ratio
-                let ratio: F16Dot16 = .init(bitPattern: tmp32).dividedWithSaturation(
-                  by: F16Dot16(bitPattern: tmp32B),
-                  rounding: .towardZero
-                )
-
-                // Bincompat: The F16Dot16 arithmetic below (including reading/adjusting
-                // original coordinates throws(InterpreterError) in the bottom 16 bits)
-                // replicates shipped behaviour.
-                let originalValue = Int32(points.original[index])
-                let shiftedByStartPoint = originalValue &- dx2
-                let appliedRatio: F16Dot16 = .init(bitPattern: shiftedByStartPoint)
-                  .multipliedWithSaturation(by: ratio)
-                tmp32C = appliedRatio.bitPattern &+ dx
-              }
-              points.hinted[index] = tmp32C
-            }
-          }
-        } else if dlow != 0 {
+      if tmp32B != 0 {
+        if tmp32B <= Int32(Int16.max), tmp32 <= Int32(Int16.max) {
           while let index = iter.next() {
-            points.hinted[index] &+= dlow
+            var tmp32C = scaled[index]
+            if tmp32C <= low {
+              tmp32C &+= dlow
+            } else if tmp32C >= high {
+              tmp32C &+= dhigh
+            } else {
+              // The arithmetic below is intentionally performed using integer math (instead of fixed point)—
+              // from a fixed-point perspective, `corr` is applied to the unshifted product of two F26Dot6 values
+              // (in effect an F20Dot12) before the fractional part is corrected by division.
+              tmp32C = .init(original[index]) &- dx2
+              tmp32C &*= tmp32
+              tmp32C &+= tmp32B >> 1
+              tmp32C /= tmp32B
+              tmp32C &+= dx
+            }
+            hinted[index] = tmp32C
+          }
+        } else {
+          while let index = iter.next() {
+            var tmp32C = scaled[index]
+            if tmp32C <= low {
+              tmp32C &+= dlow
+            } else if tmp32C >= high {
+              tmp32C &+= dhigh
+            } else {
+              // Bincompat: The reference interpreter reinterpreted tmp32 and tmp32B as F16Dot16
+              // for the purpose of computing the ratio
+              let ratio: F16Dot16 = .init(bitPattern: tmp32).dividedWithSaturation(
+                by: F16Dot16(bitPattern: tmp32B),
+                rounding: .towardZero
+              )
+
+              // Bincompat: The F16Dot16 arithmetic below (including reading/adjusting
+              // original coordinates throws(InterpreterError) in the bottom 16 bits)
+              // replicates shipped behaviour.
+              let originalValue = Int32(original[index])
+              let shiftedByStartPoint = originalValue &- dx2
+              let appliedRatio: F16Dot16 = .init(bitPattern: shiftedByStartPoint)
+                .multipliedWithSaturation(by: ratio)
+              tmp32C = appliedRatio.bitPattern &+ dx
+            }
+            hinted[index] = tmp32C
           }
         }
-      } while start != finish
-    }
+      } else if dlow != 0 {
+        while let index = iter.next() {
+          hinted[index] &+= dlow
+        }
+      }
+    } while start != finish
   }
 }
 
@@ -2762,14 +2786,6 @@ private func clampToMinimumDistance(
   return distance
 }
 
-extension UnsafeMutablePointer {
-  @inline(always) @_transparent
-  fileprivate func withPointee<E: Error, Result>(_ body: (inout Pointee) throws(E) -> Result) throws(E) -> Result {
-    // SAFETY: Caller is responsible for ensuring `self` points to valid, initialized memory
-    try unsafe body(&self.pointee)
-  }
-}
-
 extension State {
   /**
    *	This gets called if a composite glyph's program includes the instructions IP, MDRP or MD,
@@ -2786,9 +2802,9 @@ extension State {
     try withZP(type: .glyph) { zone, state throws(InterpreterError) in
       // ignore phantom points
       for index in 0..<zone.phantomStartIndex {
-        var pt = try zone.point(at: index)
-        let rescaled = pt.hinted().div(state.scaleFactors.unitsPerEmScale)
-        pt.setOriginal(.init(
+        let pt = try zone.point(at: index)
+        let rescaled = zone.hinted(pt).div(state.scaleFactors.unitsPerEmScale)
+        zone.setOriginal(pt, .init(
           x: .init(truncatingIfNeeded: rescaled.x.bitPattern),
           y: .init(truncatingIfNeeded: rescaled.y.bitPattern)
         ))
@@ -2858,11 +2874,11 @@ extension State {
 
     let p2Hinted = try borrowZone(type: gs.zp2) { zone throws(InterpreterError) in
       try zone.check(against: self.maxp)
-      return try zone.point(at: p2Index).hinted()
+      return try zone.hinted(at: p2Index)
     }
     // Bincompat: zone1 is not checked by SPVTL or SFVTL
     let p1Hinted = try borrowZone(type: gs.zp1) { zone throws(InterpreterError) in
-      try zone.point(at: p1Index).hinted()
+      try zone.hinted(at: p1Index)
     }
     return computeUnitVector(p1: p1Hinted, p2: p2Hinted, rotated: rotated)
   }
@@ -2870,11 +2886,11 @@ extension State {
 
 extension GraphicsState {
   /// Moves the point referenced by `point` by `delta` (measured against the projection
-  /// vector) along the freedom vector. Bounds were validated at the `Zone.point(at:)`
-  /// factory; subsequent reads/writes through the handle skip per-call checks.
+  /// vector) along the freedom vector. Bounds were validated at the `Zone.point(at:)` factory.
   @inline(always) @_transparent
   fileprivate mutating func movePoint(
-    point: inout Zone.Point,
+    in zone: inout Zone,
+    point: Zone.Point,
     delta: F26Dot6,
     ignoringOverflow: Bool = false
   ) throws(InterpreterError) {
@@ -2893,7 +2909,7 @@ extension GraphicsState {
     }
 
     let projectedDelta = self.vector(for: delta)
-    let current = point.hinted()
+    let current = zone.hinted(point)
     let newPosition: OutlineCoord
     if ignoringOverflow {
       newPosition = current &+ projectedDelta
@@ -2904,8 +2920,8 @@ extension GraphicsState {
       }
       newPosition = sum
     }
-    point.setHinted(newPosition)
-    point.markMoved(x: moveX, y: moveY)
+    zone.setHinted(point, newPosition)
+    zone.markMoved(point, x: moveX, y: moveY)
   }
 }
 

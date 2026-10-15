@@ -31,7 +31,10 @@ let package = Package(
 		),
 		.testTarget(
 			name: "SwiftTrueTypeInterpreterTests",
-			dependencies: ["SwiftTrueTypeInterpreter"],
+			dependencies: [
+				"SwiftTrueTypeInterpreter",
+				.product(name: "BasicContainers", package: "swift-collections"),
+			],
 			swiftSettings: [
 				.swiftLanguageMode(.v6),
 				.strictMemorySafety(),
@@ -41,6 +44,7 @@ let package = Package(
 			name: "GlyphHinting",
 			dependencies: [
 				.product(name: "Benchmark", package: "benchmark"),
+				.product(name: "BasicContainers", package: "swift-collections"),
 				"SwiftTrueTypeInterpreter",
 			],
 			path: "Benchmarks/GlyphHinting",

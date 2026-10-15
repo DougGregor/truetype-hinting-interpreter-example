@@ -19,6 +19,7 @@ extension Span where Element: ~Copyable {
     // Simplified for-in over a direct `Span` instance
     var it = 0
     while it < self.count {
+      // SAFETY: `it` is in `0..<count`, by the loop condition.
       unsafe try body(self[unchecked: it])
       it &+= 1
     }

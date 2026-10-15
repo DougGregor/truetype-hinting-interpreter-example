@@ -1,7 +1,7 @@
 // Parses a single TrueType simple glyph from the `glyf` table.
 // Composite glyphs are returned as `.composite` and are not benchmarked.
 
-struct ParsedGlyph {
+struct ParsedGlyph: Sendable {
   /// Number of contours (always > 0 here).
   let numContours: Int
   let xMin: Int16

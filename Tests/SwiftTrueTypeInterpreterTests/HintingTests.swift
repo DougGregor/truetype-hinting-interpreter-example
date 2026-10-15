@@ -3,14 +3,14 @@
 import SwiftTrueTypeInterpreter
 import Testing
 
-nonisolated(unsafe) private let kArbitraryNonzeroVector = FixedVector<F2Dot14>.normalizing(
+private let kArbitraryNonzeroVector = FixedVector<F2Dot14>.normalizing(
   x: -0.707106781187,
   y: -0.707106781187
 )
 
 // Note: without at least one explicit parameter Swift will silently choose the zeroing init()
 // instead of the one with default parameters.
-nonisolated(unsafe) private let kDefaultMaxp: sfntMaxProfileTable = .init(version: F16Dot16(1.0).bitPattern)
+private let kDefaultMaxp: sfntMaxProfileTable = .init(version: F16Dot16(1.0).bitPattern)
 private let kDefaultCVTCount: UInt16 = 32
 
 // Validation exceptions for interpreter state that is reset and/or rolled back between programs/after errors.
@@ -53,9 +53,8 @@ private let kErrorExceptions: StateComponentOptions = [
     #expect(.noControl != scanControl.kind)
   }
 
-  // SAFETY: kDefaultMaxp is a module-level constant; nonisolated(unsafe) is only needed for global let in concurrency.
   func getInstance(
-    maxp: sfntMaxProfileTable = unsafe kDefaultMaxp,
+    maxp: sfntMaxProfileTable = kDefaultMaxp,
     cvtCount: UInt16 = kDefaultCVTCount
   ) -> HintingTester {
     HintingTester(interface: HintingTestInterface(maxp: maxp, cvtCount: cvtCount))
@@ -749,8 +748,7 @@ private let kErrorExceptions: StateComponentOptions = [
 
   @Test func testSVTCA_X() {
     var instance = getInstance()
-    // SAFETY: kArbitraryNonzeroVector is a module-level constant; nonisolated(unsafe) is only needed for concurrency.
-    unsafe instance.run(instructions: .setPV(kArbitraryNonzeroVector), .setFV(kArbitraryNonzeroVector), .SVTCA_X)
+    instance.run(instructions: .setPV(kArbitraryNonzeroVector), .setFV(kArbitraryNonzeroVector), .SVTCA_X)
 
     instance.expectedEngineState.variables.freedomVector = .init(x: 1, y: 0)
     instance.expectedEngineState.variables.projectionVector = .init(x: 1, y: 0)
@@ -759,8 +757,7 @@ private let kErrorExceptions: StateComponentOptions = [
 
   @Test func testSVTCA_Y() {
     var instance = getInstance()
-    // SAFETY: kArbitraryNonzeroVector is a module-level constant; nonisolated(unsafe) is only needed for concurrency.
-    unsafe instance.run(instructions: .setPV(kArbitraryNonzeroVector), .setFV(kArbitraryNonzeroVector), .SVTCA_Y)
+    instance.run(instructions: .setPV(kArbitraryNonzeroVector), .setFV(kArbitraryNonzeroVector), .SVTCA_Y)
 
     instance.expectedEngineState.variables.freedomVector = .init(x: 0, y: 1)
     instance.expectedEngineState.variables.projectionVector = .init(x: 0, y: 1)
@@ -774,8 +771,7 @@ private let kErrorExceptions: StateComponentOptions = [
 
   @Test func testSPVTCA_X() {
     var instance = getInstance()
-    // SAFETY: kArbitraryNonzeroVector is a module-level constant; nonisolated(unsafe) is only needed for concurrency.
-    unsafe instance.run(instructions: .setPV(kArbitraryNonzeroVector), .SPVTCA_X)
+    instance.run(instructions: .setPV(kArbitraryNonzeroVector), .SPVTCA_X)
 
     instance.expectedEngineState.variables.projectionVector = .init(x: 1, y: 0)
     instance.validate()
@@ -783,8 +779,7 @@ private let kErrorExceptions: StateComponentOptions = [
 
   @Test func testSPVTCA_Y() {
     var instance = getInstance()
-    // SAFETY: kArbitraryNonzeroVector is a module-level constant; nonisolated(unsafe) is only needed for concurrency.
-    unsafe instance.run(instructions: .setPV(kArbitraryNonzeroVector), .SPVTCA_Y)
+    instance.run(instructions: .setPV(kArbitraryNonzeroVector), .SPVTCA_Y)
 
     instance.expectedEngineState.variables.projectionVector = .init(x: 0, y: 1)
     instance.validate()
@@ -797,8 +792,7 @@ private let kErrorExceptions: StateComponentOptions = [
 
   @Test func testSFVTCA_X() {
     var instance = getInstance()
-    // SAFETY: kArbitraryNonzeroVector is a module-level constant; nonisolated(unsafe) is only needed for concurrency.
-    unsafe instance.run(instructions: .setFV(kArbitraryNonzeroVector), .SFVTCA_X)
+    instance.run(instructions: .setFV(kArbitraryNonzeroVector), .SFVTCA_X)
 
     instance.expectedEngineState.variables.freedomVector = .init(x: 1, y: 0)
     instance.validate()
@@ -806,8 +800,7 @@ private let kErrorExceptions: StateComponentOptions = [
 
   @Test func testSFVTCA_Y() {
     var instance = getInstance()
-    // SAFETY: kArbitraryNonzeroVector is a module-level constant; nonisolated(unsafe) is only needed for concurrency.
-    unsafe instance.run(instructions: .setFV(kArbitraryNonzeroVector), .SFVTCA_Y)
+    instance.run(instructions: .setFV(kArbitraryNonzeroVector), .SFVTCA_Y)
 
     instance.expectedEngineState.variables.freedomVector = .init(x: 0, y: 1)
     instance.validate()

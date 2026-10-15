@@ -36,7 +36,13 @@ extension SwiftTrueTypeInterpreter {
     }
 
     func contents() -> [Int32] {
-      Array(copying: array.span.reinterpret(as: Int32.self))
+      var result: [Int32] = []
+      result.reserveCapacity(array.count)
+      let span = array.span
+      for index in span.indices {
+        result.append(Int32(bitPattern: span[index]))
+      }
+      return result
     }
   }
 }

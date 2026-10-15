@@ -30,7 +30,7 @@ struct LongHorMetric {
   let leftSideBearing: Int16
 }
 
-struct FontTables: ~Copyable, @unchecked Sendable {
+struct FontTables: ~Copyable, Sendable {
   let head: HeadTable
   let maxp: sfntMaxProfileTable
   let hhea: HheaTable
@@ -75,16 +75,7 @@ struct FontTables: ~Copyable, @unchecked Sendable {
   static func load(ctFont: CTFont) -> FontTables {
     func bytes(_ tag: CTFontTableTag) -> [UInt8]? {
       guard let cfdata = CTFontCopyTable(ctFont, tag, []) else { return nil }
-      let length = CFDataGetLength(cfdata)
-      guard length > 0 else { return [] }
-      var out = [UInt8](repeating: 0, count: length)
-      // SAFETY: CFDataGetBytes copies up to `length` bytes into `buf.baseAddress`,
-      // and `out` was allocated with exactly that count above; the buffer lives only
-      // for the duration of the closure, scoped by withUnsafeMutableBufferPointer.
-      unsafe out.withUnsafeMutableBufferPointer { buf in
-        unsafe CFDataGetBytes(cfdata, CFRange(location: 0, length: length), buf.baseAddress)
-      }
-      return out
+      return [UInt8](cfdata as Data)
     }
     guard let headBytes = bytes(kTagHead) else { fatalError("font has no `head` table") }
     guard let maxpBytes = bytes(kTagMaxp) else { fatalError("font has no `maxp` table") }
@@ -118,7 +109,7 @@ struct FontTables: ~Copyable, @unchecked Sendable {
 
 /// Reference-typed holder so multiple stored escaping closures can share access
 /// to a `~Copyable` `FontTables`.
-final class FontTablesBox: @unchecked Sendable {
+final class FontTablesBox: Sendable {
   let tables: FontTables
   init(_ tables: consuming FontTables) {
     self.tables = tables

@@ -12,8 +12,7 @@ extension SwiftTrueTypeInterpreter {
     /// The undefined routine, containing no opcodes.
     static var undefined: Self {
       // No FDEF or IDEF can ever be at position 0 in Fpgm
-      // SAFETY: Compile time constant `Range(uncheckedBounds: (0, 0))` is, in fact, safe.
-      unsafe Self(program: .fpgm, range: Range(uncheckedBounds: (0, 0)))
+      Self(program: .fpgm, range: 0..<0)
     }
 
     /// Whether this definition represents an undefined routine.
@@ -368,8 +367,7 @@ extension SwiftTrueTypeInterpreter {
         switch op {
         case Opcode.ENDF.rawValue:
           assert(start < topFrame.index)
-          // SAFETY: Guaranteed by loop iterator `nextOpcode(looping: Bool = false)` returning non-nil.
-          return unsafe .init(uncheckedBounds: (start, topFrame.index &- 1))
+          return start..<(topFrame.index &- 1)
         case Opcode.FDEF.rawValue, Opcode.IDEF.rawValue:
           throw .definitionsCannotBeNested
         default:

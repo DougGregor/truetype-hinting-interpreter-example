@@ -2,7 +2,7 @@ import Benchmark
 import Foundation
 import SwiftTrueTypeInterpreter
 
-private struct GlyphCase: @unchecked Sendable {
+private struct GlyphCase: Sendable {
   let parsed: ParsedGlyph
   let advance: UInt16
   let lsb: Int16

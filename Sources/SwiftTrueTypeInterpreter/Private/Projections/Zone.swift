@@ -1,4 +1,3 @@
-internal import ContainersPreview
 
 extension SwiftTrueTypeInterpreter {
   /// A zone's outline data, as spans over the arrays of a caller-owned `fnt_ElementType`.

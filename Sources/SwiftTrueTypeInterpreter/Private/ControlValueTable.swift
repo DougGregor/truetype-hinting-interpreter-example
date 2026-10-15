@@ -1,5 +1,3 @@
-internal import BasicContainers
-
 extension SwiftTrueTypeInterpreter {
   // 17/16 comes from the spec, turn it into a fixed point number transparently
   static let kDefaultControlValueCutIn: F26Dot6 = .init(bitPattern: 17 * (1 << F26Dot6.fractionBits) / 16)
@@ -18,7 +16,7 @@ extension SwiftTrueTypeInterpreter {
     /// Single width value used for regularizing distances.
     var singleWidthValue: ControlValue = .init(fUnits: 0)
 
-    private var rawValues: RigidArray<ControlValue>
+    private var rawValues: UniqueArray<ControlValue>
 
     /// Creates a new control value table with the specified capacity.
     ///

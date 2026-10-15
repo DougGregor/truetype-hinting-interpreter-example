@@ -1,5 +1,3 @@
-internal import BasicContainers
-
 extension SwiftTrueTypeInterpreter {
   /// The location of the opcodes for an executable routine.
   struct Definition {
@@ -87,7 +85,7 @@ extension SwiftTrueTypeInterpreter {
     private(set) var fdefs: FDefs
 
     /// The current call stack below the current frame.
-    var callStack: RigidArray<InstructionStream>
+    var callStack: UniqueArray<InstructionStream>
 
     /// The current frame being executed.
     var topFrame: InstructionStream
@@ -162,7 +160,7 @@ extension SwiftTrueTypeInterpreter {
     struct IDefs: ~Copyable {
       /// All current instruction definitions.
       /// Indexed by opcode (Eint8); always fully initialized with empty definitions.
-      private var _storage: RigidArray<Definition>
+      private var _storage: UniqueArray<Definition>
 
       /// The number of custom instruction definitions.
       private(set) var count: Int
@@ -238,7 +236,7 @@ extension SwiftTrueTypeInterpreter {
     struct FDefs: ~Copyable {
       /// All current instruction definitions.
       /// Indexed by identifier (Int32), up to the limit in maxp.
-      private var _storage: RigidArray<Definition>
+      private var _storage: UniqueArray<Definition>
 
       /// Creates a new function definitions container.
       ///
@@ -347,7 +345,7 @@ extension SwiftTrueTypeInterpreter {
       let definition = definition(of: type)
       guard !definition.range.isEmpty else { return }
       guard count > 0 else { return }
-      if callStack.isFull {
+      if callStack.count >= SwiftTrueTypeInterpreter.kMaxAllowedRecursivity {
         throw .callStackTooDeep
       }
       self.opcodes = code.opcodes(of: definition.program)

@@ -1,4 +1,3 @@
-import BasicContainers
 import CoreText
 import Foundation
 import SwiftTrueTypeInterpreter

@@ -1,5 +1,3 @@
-internal import BasicContainers
-internal import ContainersPreview
 import Darwin
 
 /// TrueType hinting interpreter.
@@ -65,7 +63,7 @@ public class SwiftTrueTypeInterpreter {
     }
 
     var storageArea: StorageArea
-    var variationCoord: RigidArray<F2Dot14>
+    var variationCoord: UniqueArray<F2Dot14>
     // Wrapping `Zone`s carry the lifetime of their exclusive borrow of the caller's
     // `fnt_ElementType`; empty `Zone`s are immortal. `State.init` composes both into `self`.
     var _twilightZone: Zone
@@ -248,14 +246,14 @@ public class SwiftTrueTypeInterpreter {
     _cvt.setValues(bitPatterns: values)
   }
 
-  var variationCoord: RigidArray<F2Dot14>
+  var variationCoord: UniqueArray<F2Dot14>
   /// Sets variation coordinates for font variations.
   ///
   /// - Parameter coords: `F2Dot14` bit patterns of the coordinates
   public func setVariationCoord(_ coords: Span<CShort>) {
     variationCoord.removeAll()
     if variationCoord.capacity < coords.count {
-      variationCoord.reallocate(capacity: coords.count)
+      variationCoord.setCapacity(coords.count)
     }
     for index in coords.indices {
       variationCoord.append(F2Dot14(bitPattern: coords[index]))
@@ -266,7 +264,7 @@ public class SwiftTrueTypeInterpreter {
   public func setNullVariationCoord(count: Int) {
     variationCoord.removeAll()
     if variationCoord.capacity < count {
-      variationCoord.reallocate(capacity: count)
+      variationCoord.setCapacity(count)
     }
     for _ in 0..<max(count, 0) {
       variationCoord.append(.zero)
@@ -942,7 +940,7 @@ public class SwiftTrueTypeInterpreter {
     _ instruction: UInt8
   ) throws(InterpreterError) {
     if !state.variationCoord.isEmpty {
-      var coords = RigidArray<F2Dot14>(capacity: 0)
+      var coords = UniqueArray<F2Dot14>(capacity: 0)
       swap(&state.variationCoord, &coords)
       defer { swap(&coords, &state.variationCoord) }
       try coords.span._forEach { coord throws(InterpreterError) in

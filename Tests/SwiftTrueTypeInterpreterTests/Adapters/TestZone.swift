@@ -1,4 +1,3 @@
-import BasicContainers
 import SwiftTrueTypeInterpreter
 
 /// Creates and manages an `fnt_ElementType`, to be passed to the TrueType interpreter by its unit tests

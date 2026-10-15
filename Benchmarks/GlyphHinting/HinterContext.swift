@@ -1,4 +1,3 @@
-import BasicContainers
 import SwiftTrueTypeInterpreter
 
 // MARK: - Phantom point count

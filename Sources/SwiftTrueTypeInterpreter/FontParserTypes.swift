@@ -1,5 +1,3 @@
-public import BasicContainers
-
 // Stub types modeling the C structures consumed by the interpreter, for standalone compilation.
 
 /// Maximum profile table from the TrueType `maxp` table.

@@ -1,5 +1,3 @@
-internal import BasicContainers
-
 extension SwiftTrueTypeInterpreter {
   /// Storage area for TrueType hinting program variables.
   ///
@@ -7,7 +5,7 @@ extension SwiftTrueTypeInterpreter {
   /// by TrueType instructions during program execution.
   struct StorageArea: ~Copyable {
     /// Array containing the storage area values.
-    private(set) /* should be private + testable */ var array: RigidArray<UInt32>
+    private(set) /* should be private + testable */ var array: UniqueArray<UInt32>
 
     /// Creates a new storage area with the specified number of locations.
     ///

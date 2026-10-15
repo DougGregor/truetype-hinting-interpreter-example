@@ -1,4 +1,3 @@
-import BasicContainers
 import Benchmark
 import Foundation
 import SwiftTrueTypeInterpreter

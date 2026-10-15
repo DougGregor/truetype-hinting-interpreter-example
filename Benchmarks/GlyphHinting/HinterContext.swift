@@ -27,13 +27,14 @@ private func makeElement(pointCapacity: Int, contourCapacity: Int) -> fnt_Elemen
 
 // MARK: - HinterContext
 
-final class HinterContext {
+struct HinterContext: ~Copyable {
   let interpreter: SwiftTrueTypeInterpreter
   let unitsPerEm: Int16
 
   private var twilight: fnt_ElementType
   private var glyph: fnt_ElementType
-  private var parBlock: fnt_ParameterBlock = .init()
+  /// The parameter block the interpreter exports after each program.
+  private(set) var parBlock: fnt_ParameterBlock = .init()
 
   init(
     tables: borrowing FontTables,
@@ -84,7 +85,7 @@ final class HinterContext {
   }
 
   /// Populates the glyph zone with `g` (scaled by `pointSize`) and runs its bytecode.
-  func hint(
+  mutating func hint(
     _ g: borrowing ParsedGlyph,
     tables: borrowing FontTables,
     pointSize: Int32,

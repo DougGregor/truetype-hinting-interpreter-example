@@ -41,7 +41,7 @@ private func filterHintable(
   keep.reserveCapacity(all.count)
   outer: for c in all {
     for ppem in ppems {
-      guard let ctx = try? HinterContext(tables: tables, pointSize: ppem) else { return keep }
+      guard var ctx = try? HinterContext(tables: tables, pointSize: ppem) else { return keep }
       do {
         try ctx.hint(c.parsed, tables: tables, pointSize: ppem, advanceWidth: c.advance, leftSideBearing: c.lsb)
       } catch {
@@ -117,11 +117,11 @@ let benchmarks: @Sendable () -> Void = {
     for ppem in ppems {
       Benchmark("hint-\(fontName)-\(ppem)ppem") { benchmark in
         for _ in benchmark.scaledIterations {
-          let ctx = try HinterContext(tables: box.tables, pointSize: ppem)
+          var ctx = try HinterContext(tables: box.tables, pointSize: ppem)
           for c in glyphsToHint {
             try ctx.hint(c.parsed, tables: box.tables, pointSize: ppem, advanceWidth: c.advance, leftSideBearing: c.lsb)
           }
-          blackHole(ctx)
+          blackHole(ctx.parBlock)
         }
       }
     }
@@ -129,7 +129,7 @@ let benchmarks: @Sendable () -> Void = {
     Benchmark("setup-\(fontName)-12ppem") { benchmark in
       for _ in benchmark.scaledIterations {
         let ctx = try HinterContext(tables: box.tables, pointSize: 12)
-        blackHole(ctx)
+        blackHole(ctx.parBlock)
       }
     }
   }

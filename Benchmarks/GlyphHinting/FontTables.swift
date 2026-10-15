@@ -1,3 +1,4 @@
+import BasicContainers
 import CoreText
 import Foundation
 import SwiftTrueTypeInterpreter
@@ -34,12 +35,12 @@ struct FontTables: ~Copyable, Sendable {
   let head: HeadTable
   let maxp: sfntMaxProfileTable
   let hhea: HheaTable
-  let cvt: [Int16]
-  let fpgm: [UInt8]
-  let prep: [UInt8]
-  let glyf: [UInt8]
-  let loca: [UInt32]   // glyph offsets into `glyf`, length numGlyphs+1
-  let hmtx: [LongHorMetric]
+  let cvt: UniqueArray<Int16>
+  let fpgm: UniqueArray<UInt8>
+  let prep: UniqueArray<UInt8>
+  let glyf: UniqueArray<UInt8>
+  let loca: UniqueArray<UInt32>   // glyph offsets into `glyf`, length numGlyphs+1
+  let hmtx: UniqueArray<LongHorMetric>
 
   static func load(fontName: String) -> FontTables {
     let font = CTFontCreateWithName(fontName as CFString, 12.0, nil)
@@ -98,9 +99,9 @@ struct FontTables: ~Copyable, Sendable {
       maxp: maxp,
       hhea: hhea,
       cvt: cvt,
-      fpgm: fpgmBytes,
-      prep: prepBytes,
-      glyf: glyfBytes,
+      fpgm: UniqueArray(copying: fpgmBytes.span),
+      prep: UniqueArray(copying: prepBytes.span),
+      glyf: UniqueArray(copying: glyfBytes.span),
       loca: loca,
       hmtx: hmtx
     )
@@ -204,20 +205,18 @@ private func parseHhea(_ bytes: [UInt8]) -> HheaTable {
   return HheaTable(numberOfHMetrics: numberOfHMetrics)
 }
 
-private func parseCvt(_ bytes: [UInt8]) -> [Int16] {
+private func parseCvt(_ bytes: [UInt8]) -> UniqueArray<Int16> {
   var r = ByteReader(bytes: bytes)
   let count = bytes.count / 2
-  var out: [Int16] = []
-  out.reserveCapacity(count)
+  var out = UniqueArray<Int16>(minimumCapacity: count)
   for _ in 0..<count { out.append(r.i16()) }
   return out
 }
 
-private func parseLoca(_ bytes: [UInt8], numGlyphs: UInt16, isLong: Bool) -> [UInt32] {
+private func parseLoca(_ bytes: [UInt8], numGlyphs: UInt16, isLong: Bool) -> UniqueArray<UInt32> {
   var r = ByteReader(bytes: bytes)
   let count = Int(numGlyphs) + 1
-  var out: [UInt32] = []
-  out.reserveCapacity(count)
+  var out = UniqueArray<UInt32>(minimumCapacity: count)
   if isLong {
     for _ in 0..<count { out.append(r.u32()) }
   } else {
@@ -226,10 +225,9 @@ private func parseLoca(_ bytes: [UInt8], numGlyphs: UInt16, isLong: Bool) -> [UI
   return out
 }
 
-private func parseHmtx(_ bytes: [UInt8], numHMetrics: UInt16, numGlyphs: UInt16) -> [LongHorMetric] {
+private func parseHmtx(_ bytes: [UInt8], numHMetrics: UInt16, numGlyphs: UInt16) -> UniqueArray<LongHorMetric> {
   var r = ByteReader(bytes: bytes)
-  var out: [LongHorMetric] = []
-  out.reserveCapacity(Int(numGlyphs))
+  var out = UniqueArray<LongHorMetric>(minimumCapacity: max(Int(numGlyphs), Int(numHMetrics)))
   var lastAdvance: UInt16 = 0
   for _ in 0..<numHMetrics {
     let aw = r.u16()

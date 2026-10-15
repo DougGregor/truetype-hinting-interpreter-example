@@ -23,11 +23,13 @@ enum GlyphParseResult {
   case composite
 }
 
-func parseGlyph(glyf: [UInt8], offset: UInt32, length: UInt32) -> GlyphParseResult {
+func parseGlyph(glyf: Span<UInt8>, offset: UInt32, length: UInt32) -> GlyphParseResult {
   guard length > 0 else { return .empty }
   let start = Int(offset)
   let end = start + Int(length)
-  let slice = Array(glyf[start..<end])
+  var slice: [UInt8] = []
+  slice.reserveCapacity(end - start)
+  for i in start..<end { slice.append(glyf[i]) }
   var r = ByteReader(bytes: slice)
   let numContoursSigned = r.i16()
   if numContoursSigned < 0 { return .composite }

@@ -35,17 +35,12 @@ final class HinterContext {
   private var glyph: fnt_ElementType
   private var parBlock: fnt_ParameterBlock = .init()
 
-  private let fpgmBytes: [UInt8]
-  private let prepBytes: [UInt8]
-
   init(
     tables: borrowing FontTables,
     pointSize: Int32
   ) throws {
     let maxp = tables.maxp
     self.unitsPerEm = tables.head.unitsPerEm
-    self.fpgmBytes = tables.fpgm
-    self.prepBytes = tables.prep
     self.interpreter = SwiftTrueTypeInterpreter(maxp: maxp, cvtCount: UInt16(tables.cvt.count))
 
     let glyphPoints = max(Int(maxp.maxPoints), Int(maxp.maxCompositePoints)) + kPrivatePhantomCount
@@ -56,7 +51,8 @@ final class HinterContext {
 
     // CVT — convert FUnit Int16 to F26Dot6 (shift-left by fractionBits).
     if !tables.cvt.isEmpty {
-      let cvt32 = tables.cvt.map { Int32($0) << 6 }
+      var cvt32 = UniqueArray<Int32>(minimumCapacity: tables.cvt.count)
+      for i in 0..<tables.cvt.count { cvt32.append(Int32(tables.cvt[i]) << 6) }
       interpreter.setCVT(cvt32.span)
     }
 
@@ -74,15 +70,13 @@ final class HinterContext {
     )
 
     // Run fpgm; then run prep with fpgm still in scope (prep may CALL fpgm functions).
-    let fpgm = fpgmBytes
-    let prep = prepBytes
     try interpreter.runProgram(
-      fpgm: fpgm.span, prep: Span<UInt8>(), glyf: Span<UInt8>(),
+      fpgm: tables.fpgm.span, prep: Span<UInt8>(), glyf: Span<UInt8>(),
       unscaledOutlineIsWrong: false,
       parBlock: &parBlock
     )
     try interpreter.runProgram(
-      fpgm: fpgm.span, prep: prep.span, glyf: Span<UInt8>(),
+      fpgm: tables.fpgm.span, prep: tables.prep.span, glyf: Span<UInt8>(),
       twilightZone: &twilight,
       unscaledOutlineIsWrong: false,
       parBlock: &parBlock
@@ -92,15 +86,43 @@ final class HinterContext {
   /// Populates the glyph zone with `g` (scaled by `pointSize`) and runs its bytecode.
   func hint(
     _ g: borrowing ParsedGlyph,
+    tables: borrowing FontTables,
     pointSize: Int32,
     advanceWidth: UInt16,
     leftSideBearing: Int16
   ) throws {
+    Self.populate(
+      &glyph, with: g, unitsPerEm: unitsPerEm, pointSize: pointSize,
+      advanceWidth: advanceWidth, leftSideBearing: leftSideBearing)
+
+    // Run the glyph bytecode. fpgm/prep are passed too so CALL/LOOPCALL
+    // to functions defined in those programs can dereference their bytecode.
+    try interpreter.runProgram(
+      fpgm: tables.fpgm.span, prep: tables.prep.span, glyf: g.instructions.span,
+      twilightZone: &twilight,
+      glyphZone: &glyph,
+      unscaledOutlineIsWrong: false,
+      parBlock: &parBlock
+    )
+  }
+
+  /// Writes `g`'s outline (scaled by `pointSize`) and phantom points into `elt`.
+  ///
+  /// Taking the element `inout` makes one exclusive access for the whole fill, so each array is
+  /// written through a `MutableSpan` without per-write exclusivity checks.
+  private static func populate(
+    _ elt: inout fnt_ElementType,
+    with g: borrowing ParsedGlyph,
+    unitsPerEm: Int16,
+    pointSize: Int32,
+    advanceWidth: UInt16,
+    leftSideBearing: Int16
+  ) {
     let n = g.xCoords.count
     let phantomCount = kPrivatePhantomCount
     let totalPoints = n + phantomCount
-    precondition(totalPoints <= Int(glyph.maxPointCount), "glyph exceeds preallocated capacity")
-    precondition(g.numContours <= Int(glyph.maxContourCount), "contours exceed preallocated capacity")
+    precondition(totalPoints <= Int(elt.maxPointCount), "glyph exceeds preallocated capacity")
+    precondition(g.numContours <= Int(elt.maxContourCount), "contours exceed preallocated capacity")
 
     // Scale: F26Dot6 = fUnit * pointSize * 64 / unitsPerEm
     let upem = Int32(unitsPerEm)
@@ -115,7 +137,7 @@ final class HinterContext {
     let lsb = leftSideBearing
     let rsb = Int16(truncatingIfNeeded: Int32(leftSideBearing) + Int32(advanceWidth))
     // Vertical phantoms (no vmtx parsed) → 0/0; common when fonts only use horizontal phantoms.
-    let outlinePhantoms: [(Int16, Int16)] = [
+    let outlinePhantoms: [8 of (Int16, Int16)] = [
       (lsb, 0),
       (rsb, 0),
       (0, 0),
@@ -124,10 +146,7 @@ final class HinterContext {
       (0, 0), (0, 0), (0, 0), (0, 0),
     ]
 
-    // Populate point arrays — outline points first, then phantoms. The element is moved out
-    // of `self` for the duration so that each array is written through a `MutableSpan` without
-    // per-write exclusivity checks.
-    var elt = exchange(&glyph, with: .init())
+    // Populate point arrays — outline points first, then phantoms.
     do {
       var oox = elt.oox.mutableSpan
       var ooy = elt.ooy.mutableSpan
@@ -182,19 +201,5 @@ final class HinterContext {
 
     elt.pointCount = Int32(n)
     elt.contourCount = Int32(g.numContours)
-    glyph = elt
-
-    // Run the glyph bytecode. fpgm/prep are passed too so CALL/LOOPCALL
-    // to functions defined in those programs can dereference their bytecode.
-    let fpgm = fpgmBytes
-    let prep = prepBytes
-    let glyf = g.instructions
-    try interpreter.runProgram(
-      fpgm: fpgm.span, prep: prep.span, glyf: glyf.span,
-      twilightZone: &twilight,
-      glyphZone: &glyph,
-      unscaledOutlineIsWrong: false,
-      parBlock: &parBlock
-    )
   }
 }

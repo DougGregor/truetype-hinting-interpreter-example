@@ -200,11 +200,9 @@ extension SwiftTrueTypeInterpreter {
     }
 
     /// A validated index of a point in a `Zone`. Making one (via ``Zone/point(at:)``) checks
-    /// the index against `maxPointCount`.
-    ///
-    /// The accessors below index the zone's point arrays without a bounds check, relying on this
-    /// validation. A `Point` must only be used with the zone that made it; another zone may
-    /// have a smaller `maxPointCount`.
+    /// the index against `maxPointCount`. It is only an index: the zone's spans still check
+    /// every access, so using it with a different zone is a logic error but not a memory-safety
+    /// one.
     struct Point: BitwiseCopyable {
       fileprivate let index: Int
 
@@ -219,51 +217,42 @@ extension SwiftTrueTypeInterpreter {
       Point(index: try validated(index))
     }
 
-    // SAFETY (all `unchecked` accesses below): `p.index` is in `0..<maxPointCount`, because
-    // `Point` can only be made by `point(at:)`, and `init(_:wrapping:)` checked that every
-    // point array has at least `maxPointCount` elements. Empty zones have `maxPointCount == 0`,
-    // so they never hand out a `Point`. `p` must come from this zone (see `Point`).
-
     @inline(always) @_transparent
     func hinted(_ p: Point) -> OutlineCoord {
-      unsafe OutlineCoord(
-        x: F26Dot6(bitPattern: x[unchecked: p.index]),
-        y: F26Dot6(bitPattern: y[unchecked: p.index]))
+      OutlineCoord(x: F26Dot6(bitPattern: x[p.index]), y: F26Dot6(bitPattern: y[p.index]))
     }
 
     @inline(always) @_transparent
     func scaled(_ p: Point) -> OutlineCoord {
-      unsafe OutlineCoord(
-        x: F26Dot6(bitPattern: ox[unchecked: p.index]),
-        y: F26Dot6(bitPattern: oy[unchecked: p.index]))
+      OutlineCoord(x: F26Dot6(bitPattern: ox[p.index]), y: F26Dot6(bitPattern: oy[p.index]))
     }
 
     @inline(always) @_transparent
     func original(_ p: Point) -> UnscaledCoord {
-      unsafe UnscaledCoord(x: oox[unchecked: p.index], y: ooy[unchecked: p.index])
+      UnscaledCoord(x: oox[p.index], y: ooy[p.index])
     }
 
     @inline(always) @_transparent
     mutating func setHinted(_ p: Point, _ value: OutlineCoord) {
-      unsafe x[unchecked: p.index] = value.x.bitPattern
-      unsafe y[unchecked: p.index] = value.y.bitPattern
+      x[p.index] = value.x.bitPattern
+      y[p.index] = value.y.bitPattern
     }
 
     @inline(always) @_transparent
     mutating func setScaled(_ p: Point, _ value: OutlineCoord) {
-      unsafe ox[unchecked: p.index] = value.x.bitPattern
-      unsafe oy[unchecked: p.index] = value.y.bitPattern
+      ox[p.index] = value.x.bitPattern
+      oy[p.index] = value.y.bitPattern
     }
 
     @inline(always) @_transparent
     mutating func setOriginal(_ p: Point, _ value: UnscaledCoord) {
-      unsafe oox[unchecked: p.index] = value.x
-      unsafe ooy[unchecked: p.index] = value.y
+      oox[p.index] = value.x
+      ooy[p.index] = value.y
     }
 
     @inline(always) @_transparent
     mutating func toggleOnCurve(_ p: Point) {
-      unsafe onCurve[unchecked: p.index] ^= Point.ONCURVE
+      onCurve[p.index] ^= Point.ONCURVE
     }
 
     /// OR-merges the given `xMoved`/`yMoved` flags into the point's `f` byte.
@@ -271,7 +260,7 @@ extension SwiftTrueTypeInterpreter {
     mutating func markMoved(_ p: Point, x xMoved: Bool, y yMoved: Bool) {
       let bits: UInt8 = (xMoved ? Point.XMOVED : 0) | (yMoved ? Point.YMOVED : 0)
       if bits != 0 {
-        unsafe f[unchecked: p.index] |= bits
+        f[p.index] |= bits
       }
     }
 
@@ -280,7 +269,7 @@ extension SwiftTrueTypeInterpreter {
     mutating func clearMoved(_ p: Point, x xMoved: Bool, y yMoved: Bool) {
       let bits: UInt8 = (xMoved ? Point.XMOVED : 0) | (yMoved ? Point.YMOVED : 0)
       if bits != 0 {
-        unsafe f[unchecked: p.index] &= ~bits
+        f[p.index] &= ~bits
       }
     }
   }

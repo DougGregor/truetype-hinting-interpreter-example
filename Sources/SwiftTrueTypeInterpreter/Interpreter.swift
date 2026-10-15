@@ -2490,13 +2490,9 @@ private func fliprg(_ state: inout State, onCurve: Bool) throws(InterpreterError
     if max >= min {
       for index in min...max {
         if onCurve {
-          // SAFETY: `min` and `max` are validated against `0..<zone.maxPointCount` above, and
-          // `onCurve` has at least `maxPointCount` elements, so `index` is in bounds.
-          unsafe zone.onCurve[unchecked: index] |= Zone.Point.ONCURVE
+          zone.onCurve[index] |= Zone.Point.ONCURVE
         } else {
-          // SAFETY: `min` and `max` are validated against `0..<zone.maxPointCount` above, and
-          // `onCurve` has at least `maxPointCount` elements, so `index` is in bounds.
-          unsafe zone.onCurve[unchecked: index] &= ~Zone.Point.ONCURVE
+          zone.onCurve[index] &= ~Zone.Point.ONCURVE
         }
       }
     }

@@ -2,7 +2,7 @@ import Benchmark
 import Foundation
 import SwiftTrueTypeInterpreter
 
-private struct GlyphCase: @unchecked Sendable {
+private struct GlyphCase: Sendable {
   let parsed: ParsedGlyph
   let advance: UInt16
   let lsb: Int16
@@ -16,7 +16,7 @@ private func collectGlyphs(_ tables: borrowing FontTables, limit: Int) -> [Glyph
     let nextOff = tables.loca[glyphIdx + 1]
     guard nextOff > off else { continue }
     let len = nextOff - off
-    if case .simple(let g) = parseGlyph(glyf: tables.glyf, offset: off, length: len),
+    if case .simple(let g) = parseGlyph(glyf: tables.glyf.span, offset: off, length: len),
       !g.instructions.isEmpty
     {
       let m = tables.hmtx[glyphIdx]
@@ -40,9 +40,9 @@ private func filterHintable(
   keep.reserveCapacity(all.count)
   outer: for c in all {
     for ppem in ppems {
-      guard let ctx = try? HinterContext(tables: tables, pointSize: ppem) else { return keep }
+      guard var ctx = try? HinterContext(tables: tables, pointSize: ppem) else { return keep }
       do {
-        try ctx.hint(c.parsed, pointSize: ppem, advanceWidth: c.advance, leftSideBearing: c.lsb)
+        try ctx.hint(c.parsed, tables: tables, pointSize: ppem, advanceWidth: c.advance, leftSideBearing: c.lsb)
       } catch {
         continue outer
       }
@@ -116,11 +116,11 @@ let benchmarks: @Sendable () -> Void = {
     for ppem in ppems {
       Benchmark("hint-\(fontName)-\(ppem)ppem") { benchmark in
         for _ in benchmark.scaledIterations {
-          let ctx = try HinterContext(tables: box.tables, pointSize: ppem)
+          var ctx = try HinterContext(tables: box.tables, pointSize: ppem)
           for c in glyphsToHint {
-            try ctx.hint(c.parsed, pointSize: ppem, advanceWidth: c.advance, leftSideBearing: c.lsb)
+            try ctx.hint(c.parsed, tables: box.tables, pointSize: ppem, advanceWidth: c.advance, leftSideBearing: c.lsb)
           }
-          blackHole(ctx)
+          blackHole(ctx.parBlock)
         }
       }
     }
@@ -128,7 +128,7 @@ let benchmarks: @Sendable () -> Void = {
     Benchmark("setup-\(fontName)-12ppem") { benchmark in
       for _ in benchmark.scaledIterations {
         let ctx = try HinterContext(tables: box.tables, pointSize: 12)
-        blackHole(ctx)
+        blackHole(ctx.parBlock)
       }
     }
   }

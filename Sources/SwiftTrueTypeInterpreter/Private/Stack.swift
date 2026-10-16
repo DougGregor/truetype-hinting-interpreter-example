@@ -1,10 +1,8 @@
-internal import BasicContainers
-
 extension SwiftTrueTypeInterpreter {
   /// Execution stack for the TrueType interpreter.
   struct Stack: ~Copyable {
     /// Stack elements storage.
-    private(set) var items: RigidArray<StackElement>
+    private(set) var items: UniqueArray<StackElement>
 
     private let preallocatedSize: Int = 1_024
 
@@ -38,7 +36,7 @@ extension SwiftTrueTypeInterpreter {
         maximumSize,
         Swift.max(items.count + 1, 2 * items.capacity)
       )
-      items.reallocate(capacity: c)
+      items.setCapacity(c)
     }
 
     private mutating func _grow(by newCapacity: Int) throws(InterpreterError) {
@@ -47,7 +45,7 @@ extension SwiftTrueTypeInterpreter {
         maximumSize,
         Swift.max(items.count &+ newCapacity, 2 * items.capacity)
       )
-      items.reallocate(capacity: c)
+      items.setCapacity(c)
     }
 
     /// Pushes multiple byte values onto the stack.
@@ -58,8 +56,11 @@ extension SwiftTrueTypeInterpreter {
       if items.freeCapacity < bytes.count {
         try _grow(by: bytes.count)
       }
-      try bytes._forEach { byte throws(InterpreterError) in
-        items.append(StackElement(byte))
+      // Capacity is ensured above, so append through an `OutputSpan`, which has no growth path.
+      items.edit { output in
+        bytes._forEach { byte in
+          output.append(StackElement(byte))
+        }
       }
     }
 
@@ -68,10 +69,12 @@ extension SwiftTrueTypeInterpreter {
     /// - Parameter newItem: Element to push
     @inline(always) @_transparent
     mutating func push(_ newItem: StackElement) throws(InterpreterError) {
-      if items.isFull {
+      if items.freeCapacity == 0 {
         try _grow()
       }
-      items.append(newItem)
+      // Capacity is ensured above, so append through an `OutputSpan`, which has no growth path.
+      // (`UniqueArray.append` includes one, which keeps it from being inlined here.)
+      items.edit { $0.append(newItem) }
     }
 
     /// Pops the top element from the stack.

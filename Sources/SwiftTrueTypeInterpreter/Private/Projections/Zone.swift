@@ -1,14 +1,11 @@
-internal import ContainersPreview
-
-// Sentinel `fnt_ElementType` instance (zero-initialized) used as the borrow source for empty
-// `Zone`s. All counts on an empty Zone are zero so its accessors short-circuit before they
-// could read through `_element.value`; the sentinel only needs a stable address so that the
-// `Ref` it backs has somewhere to point.
-private nonisolated(unsafe) let _emptyZoneSentinelElement = unsafe fnt_ElementType()
 
 extension SwiftTrueTypeInterpreter {
-  // Zone provides bounds and lifetime safety to callers based on the premises described in `init(_:wrapping:)`.
-  @safe public struct Zone: ~Copyable, ~Escapable {
+  /// A zone's outline data, as spans over the arrays of a caller-owned `fnt_ElementType`.
+  ///
+  /// The zone exclusively borrows the element for its lifetime, and every access is
+  /// bounds-checked by the spans. The constructors check that the element's arrays are as long
+  /// as its counts claim, so callers can rely on `maxPointCount` and `maxContourCount`.
+  public struct Zone: ~Copyable, ~Escapable {
     public enum ZoneType: Int32, Equatable, RawRepresentable {
       case twilight = 0
       case glyph = 1
@@ -19,91 +16,97 @@ extension SwiftTrueTypeInterpreter {
       }
     }
 
-    @_lifetime(copy element)
-    static func glyphZone(wrapping element: Ref<fnt_ElementType>) -> Self {
-      // SAFETY: `element` is passed unchanged to `init(_:wrapping:)`,
-      // which carries the wrapping-Zone contract.
-      unsafe Self(.glyph, wrapping: element)
+    @_lifetime(&element)
+    static func glyphZone(wrapping element: inout fnt_ElementType) -> Self {
+      Self(.glyph, wrapping: &element)
     }
 
-    @_lifetime(copy element)
-    static func twilightZone(wrapping element: Ref<fnt_ElementType>) -> Self {
-      // SAFETY: `element` is passed unchanged to `init(_:wrapping:)`,
-      // which carries the wrapping-Zone contract.
-      unsafe Self(.twilight, wrapping: element)
+    @_lifetime(&element)
+    static func twilightZone(wrapping element: inout fnt_ElementType) -> Self {
+      Self(.twilight, wrapping: &element)
     }
 
-    // Constructs an empty Zone. `isPresent` returns false, and the bounds-checked entry
-    // points (`point(at:)`, `readContour`) refuse to proceed because their bounds are zero.
-    // Keeps an `anchoredBy:` parameter only because `Ref` (which `_element` stores) has no
-    // immortal initializer; the resulting Zone is anchored to that scope but never reads
-    // through `_element.value`.
-    @_lifetime(copy anchor)
-    static func empty<Anchor: ~Copyable & ~Escapable>(
-      _ zoneType: ZoneType,
-      anchoredBy anchor: borrowing Anchor
-    ) -> Self {
-      Self(emptyOf: zoneType, anchoredBy: anchor)
+    /// Constructs an empty Zone. `isPresent` returns false, and the bounds-checked entry
+    /// points (`point(at:)`, `readContour`) refuse to proceed because their bounds are zero.
+    @_lifetime(immortal)
+    static func empty(_ zoneType: ZoneType) -> Self {
+      Self(emptyOf: zoneType)
     }
 
     let zoneType: ZoneType
 
-    // For non-empty Zones: a `Ref` to a valid initialized `fnt_ElementType` per the wrapping
-    // init's premise. For empty Zones: a `Ref` to `_emptyZoneSentinelElement`, never read
-    // through (all counts are zero so every access method short-circuits).
-    let _element: Ref<fnt_ElementType>
-
     let isPresent: Bool
 
-    @_lifetime(copy element)
-    init(_ zoneType: ZoneType, wrapping element: Ref<fnt_ElementType>) {
-      self.zoneType = zoneType
-      // SAFETY: the `fnt_ElementType` passed by the caller must satisfy:
-      // - `maxPointCount`/`pointCount`, `maxContourCount`/`contourCount` are accurate
-      //   and `pointCount ≤ maxPointCount`, `contourCount ≤ maxContourCount`.
-      // - `x`, `y`, `ox`, `oy`, `oox`, `ooy`, `onCurve`, and `f` point at parallel
-      //   arrays of length ≥ `maxPointCount`.
-      // - `sp`, `ep` point at arrays of length ≥ `maxContourCount`.
-      unsafe _element = element
-      isPresent = true
-      let (eltPointCount, eltMaxPointCount, eltMaxContourCount, eltContourCount) = unsafe (
-        Int(element.value.pointCount),
-        Int(element.value.maxPointCount),
-        Int(element.value.maxContourCount),
-        Int(element.value.contourCount)
-      )
+    // Hinted coordinates, scaled unhinted coordinates, and unscaled unhinted coordinates.
+    var x: MutableSpan<Int32>
+    var y: MutableSpan<Int32>
+    var ox: MutableSpan<Int32>
+    var oy: MutableSpan<Int32>
+    var oox: MutableSpan<Int16>
+    var ooy: MutableSpan<Int16>
+    var onCurve: MutableSpan<UInt8>
+    var f: MutableSpan<UInt8>
+
+    // Contour start and end points.
+    let sp: Span<UInt16>
+    let ep: Span<UInt16>
+
+    @_lifetime(&element)
+    init(_ zoneType: ZoneType, wrapping element: inout fnt_ElementType) {
+      let eltPointCount = Int(element.pointCount)
+      let eltMaxPointCount = Int(element.maxPointCount)
+      let eltMaxContourCount = Int(element.maxContourCount)
+      let eltContourCount = Int(element.contourCount)
       let phantomCount = (zoneType == .twilight) ? 0 : Int(kPrivatePhantomCount.rawValue)
+
+      // The element must be accurate about its own sizes.
+      precondition(
+        0 <= eltPointCount && eltPointCount + phantomCount <= eltMaxPointCount
+          && 0 <= eltContourCount && eltContourCount <= eltMaxContourCount,
+        "inconsistent fnt_ElementType counts")
+      precondition(
+        element.x.count >= eltMaxPointCount && element.y.count >= eltMaxPointCount
+          && element.ox.count >= eltMaxPointCount && element.oy.count >= eltMaxPointCount
+          && element.oox.count >= eltMaxPointCount && element.ooy.count >= eltMaxPointCount
+          && element.onCurve.count >= eltMaxPointCount && element.f.count >= eltMaxPointCount
+          && element.sp.count >= eltMaxContourCount && element.ep.count >= eltMaxContourCount,
+        "fnt_ElementType arrays are shorter than its maximum counts")
+
+      self.zoneType = zoneType
+      isPresent = true
+      x = element.x.mutableSpan
+      y = element.y.mutableSpan
+      ox = element.ox.mutableSpan
+      oy = element.oy.mutableSpan
+      oox = element.oox.mutableSpan
+      ooy = element.ooy.mutableSpan
+      onCurve = element.onCurve.mutableSpan
+      f = element.f.mutableSpan
+      sp = element.sp.span
+      ep = element.ep.span
 
       maxPointCount = eltMaxPointCount
       pointCount = eltPointCount + phantomCount
       phantomStartIndex = eltPointCount
-      assert(maxPointCount >= pointCount)
-      assert(maxPointCount >= phantomStartIndex)
-
       maxContourCount = eltMaxContourCount
       contourCount = eltContourCount
       contourIndices = 0..<contourCount
     }
 
-    // Empty initializer. Constructs `_element` as a `Ref` borrowing
-    // `_emptyZoneSentinelElement` (a process-lifetime `let`) and rebinds its lifetime to
-    // `anchor`'s — this is sound because the sentinel outlives any caller-provided anchor.
-    // All counts are zero so every access method short-circuits before it could read
-    // through `_element.value`.
-    @_lifetime(copy anchor)
-    private init<Anchor: ~Copyable & ~Escapable>(
-      emptyOf zoneType: ZoneType,
-      anchoredBy anchor: borrowing Anchor
-    ) {
+    @_lifetime(immortal)
+    private init(emptyOf zoneType: ZoneType) {
       self.zoneType = zoneType
-      // SAFETY: `_emptyZoneSentinelElement` is a process-lifetime `let`; the `Ref`
-      // borrowing it is sound to keep alive arbitrarily long. `_overrideLifetime`
-      // narrows that lifetime to `copy anchor`, matching this init's annotation.
-      // `_element.value` is never read — every access method's precondition fails
-      // first because the counts below are all zero.
-      let sentinelRef = unsafe Ref(_emptyZoneSentinelElement)
-      unsafe _element = _overrideLifetime(sentinelRef, copying: anchor)
       isPresent = false
+      x = MutableSpan()
+      y = MutableSpan()
+      ox = MutableSpan()
+      oy = MutableSpan()
+      oox = MutableSpan()
+      ooy = MutableSpan()
+      onCurve = MutableSpan()
+      f = MutableSpan()
+      sp = Span()
+      ep = Span()
       maxPointCount = 0
       pointCount = 0
       phantomStartIndex = 0
@@ -129,51 +132,10 @@ extension SwiftTrueTypeInterpreter {
 
     let contourIndices: Range<Int>
 
-    // MARK: - Typed `Span` accessors for contour endpoints
-    //
-    // Each accessor returns a fresh `Span` whose lifetime is bounded by `borrow self`.
-    // The span lives only for the expression that holds it; subsequent calls on `self`
-    // are free to take a new span.
-
-    @_lifetime(borrow self)
-    @inline(always) @_transparent
-    func sp() -> Span<UInt16> {
-      precondition(maxContourCount > 0)
-      // SAFETY: `_element.value.sp` is a valid array of length `maxContourCount` per
-      // `init(_:wrapping:)` premises. The returned `Span`'s lifetime is bounded by
-      // `borrow self`, so the underlying allocation is valid while the span is live.
-      return unsafe Span(_unsafeStart: _element.value.sp, count: maxContourCount)
-    }
-
-    @_lifetime(borrow self)
-    @inline(always) @_transparent
-    func ep() -> Span<UInt16> {
-      precondition(maxContourCount > 0)
-      // SAFETY: `_element.value.ep` is a valid array of length `maxContourCount` per
-      // `init(_:wrapping:)` premises. The returned `Span`'s lifetime is bounded by
-      // `borrow self`, so the underlying allocation is valid while the span is live.
-      return unsafe Span(_unsafeStart: _element.value.ep, count: maxContourCount)
-    }
-
-    // Returns a `MutableSpan` over the on-curve flag bytes. Lifetime is bound to an
-    // exclusive `&self` borrow: callers store the result in a `var`, index-assign into
-    // it, and the borrow releases when the local goes out of scope.
-    @_lifetime(&self)
-    @inline(always) @_transparent
-    mutating func mutableOnCurve() -> MutableSpan<UInt8> {
-      precondition(maxPointCount > 0)
-      // SAFETY: `_element.value.onCurve` is a valid array of length `maxPointCount` per
-      // `init(_:wrapping:)` premises. The precondition above rules out the empty `Zone`;
-      // for non-empty Zones, dereferencing `_element` is safe. The returned `MutableSpan`'s
-      // lifetime is bounded by `&self`, so it has exclusive access to the underlying storage
-      // for its lifetime.
-      return unsafe MutableSpan(_unsafeStart: _element.value.onCurve, count: maxPointCount)
-    }
-
-    func rollback() {
+    mutating func rollback() {
       for i in 0..<(phantomStartIndex + Int(kPublicPhantomCount.rawValue)) {
-        var p = try! point(at: i)
-        p.setHinted(p.scaled())
+        let p = try! point(at: i)
+        setHinted(p, scaled(p))
       }
     }
 
@@ -199,181 +161,114 @@ extension SwiftTrueTypeInterpreter {
       guard index >= 0, index < contourCount else {
         throw .noSuchContour
       }
-      let start = Int(sp()[index])
-      let end = Int(ep()[index])
+      let start = Int(sp[index])
+      let end = Int(ep[index])
       guard start <= end else { throw .invalidOperand }
       return start...end
     }
 
-    // MARK: Point access/in-place mutation
+    // MARK: Point access
 
-    /// Hands out a bounds-checked handle to a single point at `index`. The handle
-    /// stores the host Zone's `_element` and the validated `index`, so subsequent
-    /// reads/writes through it skip the per-call bounds check.
-    @_lifetime(borrow self)
     @inline(always) @_transparent
-    func point(at index: Int) throws(InterpreterError) -> Point {
+    private func validated(_ index: Int) throws(InterpreterError) -> Int {
       guard index >= 0, index < maxPointCount else {
         throw .noSuchPoint
       }
-      // SAFETY: bounds checked above; `_element` valid per Zone construction premises.
-      return Point(borrowing: self, index)
+      return index
     }
 
-    struct AxisCoords: ~Escapable, ~Copyable {
-      var hinted: MutableSpan<Int32>
-      let scaled: Span<Int32>
-      let original: Span<Int16>
-      private let f: Span<UInt8>
-      let axis: Axis
-
-      @_lifetime(&zone)
-      @inline(always) @_transparent
-      init(zone: inout Zone, axis: Axis) {
-        self.axis = axis
-        // SAFETY: each span is derived from a parallel array hanging off
-        // `zone._element.value`, sized by `zone.maxPointCount` per the Zone init
-        // premises. The `inout zone` parameter ensures exclusive access for the
-        // lifetime of this `AxisCoords`, so the resulting `MutableSpan` cannot
-        // alias another view of the same Zone.
-        switch axis {
-        case .x:
-          unsafe hinted = MutableSpan(_unsafeStart: zone._element.value.x, count: zone.maxPointCount)
-          unsafe scaled = Span(_unsafeStart: zone._element.value.ox, count: zone.maxPointCount)
-          unsafe original = Span(_unsafeStart: zone._element.value.oox, count: zone.maxPointCount)
-          unsafe f = Span(_unsafeStart: zone._element.value.f, count: zone.maxPointCount)
-        case .y:
-          unsafe hinted = MutableSpan(_unsafeStart: zone._element.value.y, count: zone.maxPointCount)
-          unsafe scaled = Span(_unsafeStart: zone._element.value.oy, count: zone.maxPointCount)
-          unsafe original = Span(_unsafeStart: zone._element.value.ooy, count: zone.maxPointCount)
-          unsafe f = Span(_unsafeStart: zone._element.value.f, count: zone.maxPointCount)
-        }
-      }
-
-      @inline(always) @_transparent
-      func isMoved(at index: Int) -> Bool {
-        f[index] & axis.rawValue != 0
-      }
+    /// The hinted coordinates of the point at `index`.
+    @inline(always) @_transparent
+    func hinted(at index: Int) throws(InterpreterError) -> OutlineCoord {
+      let i = try validated(index)
+      return OutlineCoord(x: F26Dot6(bitPattern: x[i]), y: F26Dot6(bitPattern: y[i]))
     }
 
-    /// A bounds-checked handle to a single point in a `Zone`. Construction (via
-    /// ``Zone/point(at:)``) validates the index against `maxPointCount`, and the validated
-    /// index is then baked into the handle. Subsequent reads and writes through the handle
-    /// trust that bound and skip the per-call check.
-    @safe struct Point: ~Copyable, ~Escapable {
-      // SAFETY: `_element` is a copy of the host `Zone`'s `Ref<fnt_ElementType>` (valid per
-      // Zone init's premises); `_index` is bounds-checked against `maxPointCount` at
-      // construction time and `Point` borrows the host Zone, so the underlying allocation
-      // outlives `self`.
-      fileprivate let _element: Ref<fnt_ElementType>
-      fileprivate let _index: Int
+    /// The scaled, unhinted coordinates of the point at `index`.
+    @inline(always) @_transparent
+    func scaled(at index: Int) throws(InterpreterError) -> OutlineCoord {
+      let i = try validated(index)
+      return OutlineCoord(x: F26Dot6(bitPattern: ox[i]), y: F26Dot6(bitPattern: oy[i]))
+    }
 
-      @_lifetime(borrow zone)
-      @inline(always) @_transparent
-      fileprivate init(borrowing zone: borrowing Zone, _ index: Int) {
-        // SAFETY: `zone._element` is valid per `init(_:wrapping:)` premises. `Point` borrows
-        // `zone` (`@_lifetime(borrow zone)`), and `Zone` is `~Escapable`, so the underlying
-        // allocation outlives `self`. `index` is bounds-checked against `maxPointCount` by
-        // the caller `Zone.point(at:)` before reaching here. The `unsafe` is propagated by
-        // strict memory safety from `@unsafe fnt_ElementType`, not from any pointer
-        // operation.
-        unsafe _element = zone._element
-        _index = index
-      }
+    /// The unscaled, unhinted coordinates of the point at `index`.
+    @inline(always) @_transparent
+    func original(at index: Int) throws(InterpreterError) -> UnscaledCoord {
+      let i = try validated(index)
+      return UnscaledCoord(x: oox[i], y: ooy[i])
+    }
 
-      @inline(always) @_transparent
-      func hinted() -> OutlineCoord {
-        // SAFETY: `_element.value` is valid per Zone init premises; `.x`/`.y` are
-        // parallel arrays sized by `maxPointCount`; `_index` was bounds-checked against
-        // `maxPointCount` at construction.
-        unsafe OutlineCoord(
-          x: F26Dot6(bitPattern: _element.value.x.advanced(by: _index).pointee),
-          y: F26Dot6(bitPattern: _element.value.y.advanced(by: _index).pointee)
-        )
-      }
-
-      @inline(always) @_transparent
-      func scaled() -> OutlineCoord {
-        // SAFETY: `_element.value` is valid per Zone init premises; `.ox`/`.oy` are
-        // parallel arrays sized by `maxPointCount`; `_index` was bounds-checked against
-        // `maxPointCount` at construction.
-        unsafe OutlineCoord(
-          x: F26Dot6(bitPattern: _element.value.ox.advanced(by: _index).pointee),
-          y: F26Dot6(bitPattern: _element.value.oy.advanced(by: _index).pointee)
-        )
-      }
-
-      @inline(always) @_transparent
-      func original() -> UnscaledCoord {
-        // SAFETY: `_element.value` is valid per Zone init premises; `.oox`/`.ooy` are
-        // parallel arrays sized by `maxPointCount`; `_index` was bounds-checked against
-        // `maxPointCount` at construction.
-        unsafe UnscaledCoord(
-          x: _element.value.oox.advanced(by: _index).pointee,
-          y: _element.value.ooy.advanced(by: _index).pointee
-        )
-      }
-
-      @inline(always) @_transparent
-      mutating func setHinted(_ value: OutlineCoord) {
-        // SAFETY: `_element.value` is valid per Zone init premises; `.x`/`.y` are
-        // parallel arrays sized by `maxPointCount`; `_index` was bounds-checked against
-        // `maxPointCount` at construction.
-        unsafe _element.value.x.advanced(by: _index).pointee = value.x.bitPattern
-        unsafe _element.value.y.advanced(by: _index).pointee = value.y.bitPattern
-      }
-
-      @inline(always) @_transparent
-      mutating func setScaled(_ value: OutlineCoord) {
-        // SAFETY: `_element.value` is valid per Zone init premises; `.ox`/`.oy` are
-        // parallel arrays sized by `maxPointCount`; `_index` was bounds-checked against
-        // `maxPointCount` at construction.
-        unsafe _element.value.ox.advanced(by: _index).pointee = value.x.bitPattern
-        unsafe _element.value.oy.advanced(by: _index).pointee = value.y.bitPattern
-      }
-
-      @inline(always) @_transparent
-      mutating func setOriginal(_ value: UnscaledCoord) {
-        // SAFETY: `_element.value` is valid per Zone init premises; `.oox`/`.ooy` are
-        // parallel arrays sized by `maxPointCount`; `_index` was bounds-checked against
-        // `maxPointCount` at construction.
-        unsafe _element.value.oox.advanced(by: _index).pointee = value.x
-        unsafe _element.value.ooy.advanced(by: _index).pointee = value.y
-      }
+    /// A validated index of a point in a `Zone`. Making one (via ``Zone/point(at:)``) checks
+    /// the index against `maxPointCount`. It is only an index: the zone's spans still check
+    /// every access, so using it with a different zone is a logic error but not a memory-safety
+    /// one.
+    struct Point: BitwiseCopyable {
+      fileprivate let index: Int
 
       static let ONCURVE: UInt8 = 0x01
-      mutating func toggleOnCurve() {
-        // SAFETY: `_element.value` is valid per Zone init premises; `.onCurve` is an
-        // array sized by `maxPointCount`; `_index` was bounds-checked against
-        // `maxPointCount` at construction.
-        unsafe _element.value.onCurve.advanced(by: _index).pointee ^= Self.ONCURVE
+      fileprivate static let XMOVED: UInt8 = 0x01
+      fileprivate static let YMOVED: UInt8 = 0x02
+    }
+
+    /// Validates `index` and returns a `Point` for use with this zone's accessors.
+    @inline(always) @_transparent
+    func point(at index: Int) throws(InterpreterError) -> Point {
+      Point(index: try validated(index))
+    }
+
+    @inline(always) @_transparent
+    func hinted(_ p: Point) -> OutlineCoord {
+      OutlineCoord(x: F26Dot6(bitPattern: x[p.index]), y: F26Dot6(bitPattern: y[p.index]))
+    }
+
+    @inline(always) @_transparent
+    func scaled(_ p: Point) -> OutlineCoord {
+      OutlineCoord(x: F26Dot6(bitPattern: ox[p.index]), y: F26Dot6(bitPattern: oy[p.index]))
+    }
+
+    @inline(always) @_transparent
+    func original(_ p: Point) -> UnscaledCoord {
+      UnscaledCoord(x: oox[p.index], y: ooy[p.index])
+    }
+
+    @inline(always) @_transparent
+    mutating func setHinted(_ p: Point, _ value: OutlineCoord) {
+      x[p.index] = value.x.bitPattern
+      y[p.index] = value.y.bitPattern
+    }
+
+    @inline(always) @_transparent
+    mutating func setScaled(_ p: Point, _ value: OutlineCoord) {
+      ox[p.index] = value.x.bitPattern
+      oy[p.index] = value.y.bitPattern
+    }
+
+    @inline(always) @_transparent
+    mutating func setOriginal(_ p: Point, _ value: UnscaledCoord) {
+      oox[p.index] = value.x
+      ooy[p.index] = value.y
+    }
+
+    @inline(always) @_transparent
+    mutating func toggleOnCurve(_ p: Point) {
+      onCurve[p.index] ^= Point.ONCURVE
+    }
+
+    /// OR-merges the given `xMoved`/`yMoved` flags into the point's `f` byte.
+    @inline(always) @_transparent
+    mutating func markMoved(_ p: Point, x xMoved: Bool, y yMoved: Bool) {
+      let bits: UInt8 = (xMoved ? Point.XMOVED : 0) | (yMoved ? Point.YMOVED : 0)
+      if bits != 0 {
+        f[p.index] |= bits
       }
+    }
 
-      private static let XMOVED: UInt8 = 0x01
-      private static let YMOVED: UInt8 = 0x02
-
-      /// OR-merges the given `xMoved`/`yMoved` flags into the point's `f` byte.
-      @inline(always) @_transparent
-      mutating func markMoved(x: Bool, y: Bool) {
-        let bits: UInt8 = (x ? Self.XMOVED : 0) | (y ? Self.YMOVED : 0)
-        if bits != 0 {
-          // SAFETY: `_element.value` is valid per Zone init premises; `.f` is an array
-          // sized by `maxPointCount`; `_index` was bounds-checked against `maxPointCount`
-          // at construction.
-          unsafe _element.value.f.advanced(by: _index).pointee |= bits
-        }
-      }
-
-      /// Clears the given `xMoved`/`yMoved` flag bits from the point's `f` byte.
-      @inline(always) @_transparent
-      mutating func clearMoved(x: Bool, y: Bool) {
-        let bits: UInt8 = (x ? Self.XMOVED : 0) | (y ? Self.YMOVED : 0)
-        if bits != 0 {
-          // SAFETY: `_element.value` is valid per Zone init premises; `.f` is an array
-          // sized by `maxPointCount`; `_index` was bounds-checked against `maxPointCount`
-          // at construction.
-          unsafe _element.value.f.advanced(by: _index).pointee &= ~bits
-        }
+    /// Clears the given `xMoved`/`yMoved` flag bits from the point's `f` byte.
+    @inline(always) @_transparent
+    mutating func clearMoved(_ p: Point, x xMoved: Bool, y yMoved: Bool) {
+      let bits: UInt8 = (xMoved ? Point.XMOVED : 0) | (yMoved ? Point.YMOVED : 0)
+      if bits != 0 {
+        f[p.index] &= ~bits
       }
     }
   }

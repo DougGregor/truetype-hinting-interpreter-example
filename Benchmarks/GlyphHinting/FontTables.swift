@@ -30,16 +30,16 @@ struct LongHorMetric {
   let leftSideBearing: Int16
 }
 
-struct FontTables: ~Copyable, @unchecked Sendable {
+struct FontTables: ~Copyable, Sendable {
   let head: HeadTable
   let maxp: sfntMaxProfileTable
   let hhea: HheaTable
-  let cvt: [Int16]
-  let fpgm: [UInt8]
-  let prep: [UInt8]
-  let glyf: [UInt8]
-  let loca: [UInt32]   // glyph offsets into `glyf`, length numGlyphs+1
-  let hmtx: [LongHorMetric]
+  let cvt: UniqueArray<Int16>
+  let fpgm: UniqueArray<UInt8>
+  let prep: UniqueArray<UInt8>
+  let glyf: UniqueArray<UInt8>
+  let loca: UniqueArray<UInt32>   // glyph offsets into `glyf`, length numGlyphs+1
+  let hmtx: UniqueArray<LongHorMetric>
 
   static func load(fontName: String) -> FontTables {
     let font = CTFontCreateWithName(fontName as CFString, 12.0, nil)
@@ -73,18 +73,9 @@ struct FontTables: ~Copyable, @unchecked Sendable {
   }
 
   static func load(ctFont: CTFont) -> FontTables {
-    func bytes(_ tag: CTFontTableTag) -> [UInt8]? {
+    func bytes(_ tag: CTFontTableTag) -> UniqueArray<UInt8>? {
       guard let cfdata = CTFontCopyTable(ctFont, tag, []) else { return nil }
-      let length = CFDataGetLength(cfdata)
-      guard length > 0 else { return [] }
-      var out = [UInt8](repeating: 0, count: length)
-      // SAFETY: CFDataGetBytes copies up to `length` bytes into `buf.baseAddress`,
-      // and `out` was allocated with exactly that count above; the buffer lives only
-      // for the duration of the closure, scoped by withUnsafeMutableBufferPointer.
-      unsafe out.withUnsafeMutableBufferPointer { buf in
-        unsafe CFDataGetBytes(cfdata, CFRange(location: 0, length: length), buf.baseAddress)
-      }
-      return out
+      return UniqueArray(copying: (cfdata as Data).span)
     }
     guard let headBytes = bytes(kTagHead) else { fatalError("font has no `head` table") }
     guard let maxpBytes = bytes(kTagMaxp) else { fatalError("font has no `maxp` table") }
@@ -92,16 +83,16 @@ struct FontTables: ~Copyable, @unchecked Sendable {
     guard let locaBytes = bytes(kTagLoca) else { fatalError("font has no `loca` table — not a TrueType outline font?") }
     guard let glyfBytes = bytes(kTagGlyf) else { fatalError("font has no `glyf` table — not a TrueType outline font?") }
     guard let hmtxBytes = bytes(kTagHmtx) else { fatalError("font has no `hmtx` table") }
-    let cvtBytes = bytes(kTagCvt) ?? []
-    let fpgmBytes = bytes(kTagFpgm) ?? []
-    let prepBytes = bytes(kTagPrep) ?? []
+    let cvtBytes = bytes(kTagCvt) ?? UniqueArray()
+    let fpgmBytes = bytes(kTagFpgm) ?? UniqueArray()
+    let prepBytes = bytes(kTagPrep) ?? UniqueArray()
 
-    let head = parseHead(headBytes)
-    let maxp = parseMaxp(maxpBytes)
-    let hhea = parseHhea(hheaBytes)
-    let cvt = parseCvt(cvtBytes)
-    let loca = parseLoca(locaBytes, numGlyphs: maxp.numGlyphs, isLong: head.indexToLocFormat == 1)
-    let hmtx = parseHmtx(hmtxBytes, numHMetrics: hhea.numberOfHMetrics, numGlyphs: maxp.numGlyphs)
+    let head = parseHead(headBytes.span)
+    let maxp = parseMaxp(maxpBytes.span)
+    let hhea = parseHhea(hheaBytes.span)
+    let cvt = parseCvt(cvtBytes.span)
+    let loca = parseLoca(locaBytes.span, numGlyphs: maxp.numGlyphs, isLong: head.indexToLocFormat == 1)
+    let hmtx = parseHmtx(hmtxBytes.span, numHMetrics: hhea.numberOfHMetrics, numGlyphs: maxp.numGlyphs)
     return FontTables(
       head: head,
       maxp: maxp,
@@ -118,7 +109,7 @@ struct FontTables: ~Copyable, @unchecked Sendable {
 
 /// Reference-typed holder so multiple stored escaping closures can share access
 /// to a `~Copyable` `FontTables`.
-final class FontTablesBox: @unchecked Sendable {
+final class FontTablesBox: Sendable {
   let tables: FontTables
   init(_ tables: consuming FontTables) {
     self.tables = tables
@@ -127,9 +118,14 @@ final class FontTablesBox: @unchecked Sendable {
 
 // MARK: - Big-endian byte reader
 
-struct ByteReader {
-  let bytes: [UInt8]
+struct ByteReader: ~Escapable {
+  let bytes: Span<UInt8>
   var offset: Int = 0
+
+  @_lifetime(copy bytes)
+  init(bytes: Span<UInt8>) {
+    self.bytes = bytes
+  }
 
   mutating func u16() -> UInt16 {
     let v = (UInt16(bytes[offset]) << 8) | UInt16(bytes[offset + 1])
@@ -157,7 +153,7 @@ struct ByteReader {
 
 // MARK: - Table parsers
 
-private func parseHead(_ bytes: [UInt8]) -> HeadTable {
+private func parseHead(_ bytes: Span<UInt8>) -> HeadTable {
   var r = ByteReader(bytes: bytes)
   r.skip(18)   // version, fontRevision, checksumAdjustment, magicNumber, flags
   let unitsPerEm = r.i16()
@@ -166,7 +162,7 @@ private func parseHead(_ bytes: [UInt8]) -> HeadTable {
   return HeadTable(unitsPerEm: unitsPerEm, indexToLocFormat: indexToLocFormat)
 }
 
-private func parseMaxp(_ bytes: [UInt8]) -> sfntMaxProfileTable {
+private func parseMaxp(_ bytes: Span<UInt8>) -> sfntMaxProfileTable {
   var r = ByteReader(bytes: bytes)
   let version = r.i32()
   let numGlyphs = r.u16()
@@ -206,27 +202,25 @@ private func parseMaxp(_ bytes: [UInt8]) -> sfntMaxProfileTable {
   )
 }
 
-private func parseHhea(_ bytes: [UInt8]) -> HheaTable {
+private func parseHhea(_ bytes: Span<UInt8>) -> HheaTable {
   var r = ByteReader(bytes: bytes)
   r.skip(34)   // version through metricDataFormat
   let numberOfHMetrics = r.u16()
   return HheaTable(numberOfHMetrics: numberOfHMetrics)
 }
 
-private func parseCvt(_ bytes: [UInt8]) -> [Int16] {
+private func parseCvt(_ bytes: Span<UInt8>) -> UniqueArray<Int16> {
   var r = ByteReader(bytes: bytes)
   let count = bytes.count / 2
-  var out: [Int16] = []
-  out.reserveCapacity(count)
+  var out = UniqueArray<Int16>(minimumCapacity: count)
   for _ in 0..<count { out.append(r.i16()) }
   return out
 }
 
-private func parseLoca(_ bytes: [UInt8], numGlyphs: UInt16, isLong: Bool) -> [UInt32] {
+private func parseLoca(_ bytes: Span<UInt8>, numGlyphs: UInt16, isLong: Bool) -> UniqueArray<UInt32> {
   var r = ByteReader(bytes: bytes)
   let count = Int(numGlyphs) + 1
-  var out: [UInt32] = []
-  out.reserveCapacity(count)
+  var out = UniqueArray<UInt32>(minimumCapacity: count)
   if isLong {
     for _ in 0..<count { out.append(r.u32()) }
   } else {
@@ -235,10 +229,9 @@ private func parseLoca(_ bytes: [UInt8], numGlyphs: UInt16, isLong: Bool) -> [UI
   return out
 }
 
-private func parseHmtx(_ bytes: [UInt8], numHMetrics: UInt16, numGlyphs: UInt16) -> [LongHorMetric] {
+private func parseHmtx(_ bytes: Span<UInt8>, numHMetrics: UInt16, numGlyphs: UInt16) -> UniqueArray<LongHorMetric> {
   var r = ByteReader(bytes: bytes)
-  var out: [LongHorMetric] = []
-  out.reserveCapacity(Int(numGlyphs))
+  var out = UniqueArray<LongHorMetric>(minimumCapacity: max(Int(numGlyphs), Int(numHMetrics)))
   var lastAdvance: UInt16 = 0
   for _ in 0..<numHMetrics {
     let aw = r.u16()

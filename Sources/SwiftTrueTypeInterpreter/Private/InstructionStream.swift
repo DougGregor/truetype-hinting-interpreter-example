@@ -123,8 +123,7 @@ extension SwiftTrueTypeInterpreter {
     mutating func next(count: Int) throws(InterpreterError) -> Range<Int> {
       let start = index
       try skip(count)
-      // SAFETY: Bounds guaranteed by `skip()` (control flow thrown on violation)
-      return unsafe .init(uncheckedBounds: (start, index))
+      return start..<index
     }
   }
 }

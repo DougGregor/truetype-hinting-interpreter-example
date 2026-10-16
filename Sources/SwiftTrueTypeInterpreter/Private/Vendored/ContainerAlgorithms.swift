@@ -16,6 +16,8 @@ extension RangeReplaceableCollection {
 	/*public*/ init(copying source: borrowing Span<Element>) {
 		self.init()
 		self.reserveCapacity(source.count)
-		unsafe source.withUnsafeBufferPointer { unsafe self.append(contentsOf: $0) }
+		for index in source.indices {
+			self.append(source[index])
+		}
 	}
 }

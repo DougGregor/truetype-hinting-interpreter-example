@@ -39,6 +39,7 @@ let package = Package(
 			path: "Benchmarks/GlyphHinting",
 			exclude: ["README.md"],
 			swiftSettings: [
+				.enableExperimentalFeature("Lifetimes"),
 				.swiftLanguageMode(.v6),
 				.strictMemorySafety(),
 			],

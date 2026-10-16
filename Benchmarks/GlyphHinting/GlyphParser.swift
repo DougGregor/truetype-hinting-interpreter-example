@@ -27,10 +27,7 @@ func parseGlyph(glyf: Span<UInt8>, offset: UInt32, length: UInt32) -> GlyphParse
   guard length > 0 else { return .empty }
   let start = Int(offset)
   let end = start + Int(length)
-  var slice: [UInt8] = []
-  slice.reserveCapacity(end - start)
-  for i in start..<end { slice.append(glyf[i]) }
-  var r = ByteReader(bytes: slice)
+  var r = ByteReader(bytes: glyf.extracting(start..<end))
   let numContoursSigned = r.i16()
   if numContoursSigned < 0 { return .composite }
   let numContours = Int(numContoursSigned)

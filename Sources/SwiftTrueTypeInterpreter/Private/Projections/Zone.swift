@@ -134,8 +134,8 @@ extension SwiftTrueTypeInterpreter {
 
     mutating func rollback() {
       for i in 0..<(phantomStartIndex + Int(kPublicPhantomCount.rawValue)) {
-        let p = try! point(at: i)
-        setHinted(p, scaled(p))
+        var p = try! point(at: i)
+        p.setHinted(p.scaled())
       }
     }
 
@@ -198,78 +198,100 @@ extension SwiftTrueTypeInterpreter {
       return UnscaledCoord(x: oox[i], y: ooy[i])
     }
 
-    /// A validated index of a point in a `Zone`. Making one (via ``Zone/point(at:)``) checks
-    /// the index against `maxPointCount`. It is only an index: the zone's spans still check
-    /// every access, so using it with a different zone is a logic error but not a memory-safety
-    /// one.
-    struct Point: BitwiseCopyable {
-      fileprivate let index: Int
+    /// A handle to a single point in a `Zone`. Making one (via ``Zone/point(at:)``) checks the
+    /// index against `maxPointCount`. The handle holds exclusive access to its zone's storage
+    /// for its whole lifetime, so it cannot outlive that access or be used with another zone.
+    struct Point: ~Copyable, ~Escapable {
+      private var x: MutableSpan<Int32>
+      private var y: MutableSpan<Int32>
+      private var ox: MutableSpan<Int32>
+      private var oy: MutableSpan<Int32>
+      private var oox: MutableSpan<Int16>
+      private var ooy: MutableSpan<Int16>
+      private var onCurve: MutableSpan<UInt8>
+      private var f: MutableSpan<UInt8>
+      private let index: Int
 
       static let ONCURVE: UInt8 = 0x01
-      fileprivate static let XMOVED: UInt8 = 0x01
-      fileprivate static let YMOVED: UInt8 = 0x02
-    }
+      private static let XMOVED: UInt8 = 0x01
+      private static let YMOVED: UInt8 = 0x02
 
-    /// Validates `index` and returns a `Point` for use with this zone's accessors.
-    @inline(always) @_transparent
-    func point(at index: Int) throws(InterpreterError) -> Point {
-      Point(index: try validated(index))
-    }
+      @_lifetime(&zone)
+      @inline(always) @_transparent
+      fileprivate init(_ zone: inout Zone, _ index: Int) {
+        x = zone.x._mutatingExtracting(...)
+        y = zone.y._mutatingExtracting(...)
+        ox = zone.ox._mutatingExtracting(...)
+        oy = zone.oy._mutatingExtracting(...)
+        oox = zone.oox._mutatingExtracting(...)
+        ooy = zone.ooy._mutatingExtracting(...)
+        onCurve = zone.onCurve._mutatingExtracting(...)
+        f = zone.f._mutatingExtracting(...)
+        self.index = index
+      }
 
-    @inline(always) @_transparent
-    func hinted(_ p: Point) -> OutlineCoord {
-      OutlineCoord(x: F26Dot6(bitPattern: x[p.index]), y: F26Dot6(bitPattern: y[p.index]))
-    }
+      @inline(always) @_transparent
+      func hinted() -> OutlineCoord {
+        OutlineCoord(x: F26Dot6(bitPattern: x[index]), y: F26Dot6(bitPattern: y[index]))
+      }
 
-    @inline(always) @_transparent
-    func scaled(_ p: Point) -> OutlineCoord {
-      OutlineCoord(x: F26Dot6(bitPattern: ox[p.index]), y: F26Dot6(bitPattern: oy[p.index]))
-    }
+      @inline(always) @_transparent
+      func scaled() -> OutlineCoord {
+        OutlineCoord(x: F26Dot6(bitPattern: ox[index]), y: F26Dot6(bitPattern: oy[index]))
+      }
 
-    @inline(always) @_transparent
-    func original(_ p: Point) -> UnscaledCoord {
-      UnscaledCoord(x: oox[p.index], y: ooy[p.index])
-    }
+      @inline(always) @_transparent
+      func original() -> UnscaledCoord {
+        UnscaledCoord(x: oox[index], y: ooy[index])
+      }
 
-    @inline(always) @_transparent
-    mutating func setHinted(_ p: Point, _ value: OutlineCoord) {
-      x[p.index] = value.x.bitPattern
-      y[p.index] = value.y.bitPattern
-    }
+      @inline(always) @_transparent
+      mutating func setHinted(_ value: OutlineCoord) {
+        x[index] = value.x.bitPattern
+        y[index] = value.y.bitPattern
+      }
 
-    @inline(always) @_transparent
-    mutating func setScaled(_ p: Point, _ value: OutlineCoord) {
-      ox[p.index] = value.x.bitPattern
-      oy[p.index] = value.y.bitPattern
-    }
+      @inline(always) @_transparent
+      mutating func setScaled(_ value: OutlineCoord) {
+        ox[index] = value.x.bitPattern
+        oy[index] = value.y.bitPattern
+      }
 
-    @inline(always) @_transparent
-    mutating func setOriginal(_ p: Point, _ value: UnscaledCoord) {
-      oox[p.index] = value.x
-      ooy[p.index] = value.y
-    }
+      @inline(always) @_transparent
+      mutating func setOriginal(_ value: UnscaledCoord) {
+        oox[index] = value.x
+        ooy[index] = value.y
+      }
 
-    @inline(always) @_transparent
-    mutating func toggleOnCurve(_ p: Point) {
-      onCurve[p.index] ^= Point.ONCURVE
-    }
+      @inline(always) @_transparent
+      mutating func toggleOnCurve() {
+        onCurve[index] ^= Point.ONCURVE
+      }
 
-    /// OR-merges the given `xMoved`/`yMoved` flags into the point's `f` byte.
-    @inline(always) @_transparent
-    mutating func markMoved(_ p: Point, x xMoved: Bool, y yMoved: Bool) {
-      let bits: UInt8 = (xMoved ? Point.XMOVED : 0) | (yMoved ? Point.YMOVED : 0)
-      if bits != 0 {
-        f[p.index] |= bits
+      /// OR-merges the given `xMoved`/`yMoved` flags into the point's `f` byte.
+      @inline(always) @_transparent
+      mutating func markMoved(x xMoved: Bool, y yMoved: Bool) {
+        let bits: UInt8 = (xMoved ? Point.XMOVED : 0) | (yMoved ? Point.YMOVED : 0)
+        if bits != 0 {
+          f[index] |= bits
+        }
+      }
+
+      /// Clears the given `xMoved`/`yMoved` flag bits from the point's `f` byte.
+      @inline(always) @_transparent
+      mutating func clearMoved(x xMoved: Bool, y yMoved: Bool) {
+        let bits: UInt8 = (xMoved ? Point.XMOVED : 0) | (yMoved ? Point.YMOVED : 0)
+        if bits != 0 {
+          f[index] &= ~bits
+        }
       }
     }
 
-    /// Clears the given `xMoved`/`yMoved` flag bits from the point's `f` byte.
+    /// Validates `index` and returns a handle to the point, exclusively borrowing this zone.
+    @_lifetime(&self)
     @inline(always) @_transparent
-    mutating func clearMoved(_ p: Point, x xMoved: Bool, y yMoved: Bool) {
-      let bits: UInt8 = (xMoved ? Point.XMOVED : 0) | (yMoved ? Point.YMOVED : 0)
-      if bits != 0 {
-        f[p.index] &= ~bits
-      }
+    mutating func point(at index: Int) throws(InterpreterError) -> Point {
+      Point(&self, try validated(index))
     }
   }
 }

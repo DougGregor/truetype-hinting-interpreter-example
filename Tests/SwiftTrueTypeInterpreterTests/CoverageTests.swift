@@ -117,14 +117,11 @@ struct CoverageTests {
 
   // MARK: - Interpreter.setCVT
 
-  @Test func setCVTFromPointer() {
+  @Test func setCVTFromSpan() {
     let maxp = sfntMaxProfileTable(version: F16Dot16(1.0).bitPattern)
     let interp = SwiftTrueTypeInterpreter(maxp: maxp, cvtCount: 4)
     let values: [Int32] = [100, 200, 300, 400]
-    // SAFETY: values is non-empty so baseAddress is non-nil; count matches the array.
-    unsafe values.withUnsafeBufferPointer { buf in
-      unsafe interp.setCVT(buf.baseAddress!, count: buf.count)
-    }
+    interp.setCVT(values.span)
   }
 
   // MARK: - dividedIfRepresentable with various rounding modes
@@ -167,21 +164,13 @@ struct CoverageTests {
     program.append(contentsOf: [UInt8](repeating: 0x21, count: 1_275))  // POP
 
     var parBlock = fnt_ParameterBlock()
-    // SAFETY: program is a local array; the buffer pointer is valid for the duration of the closure.
-    try unsafe program.withUnsafeBufferPointer { buf in
-      try unsafe interp.runProgram(
-        fpgm: buf.baseAddress,
-        fpgmCount: Int32(buf.count),
-        prep: nil,
-        prepCount: 0,
-        glyf: nil,
-        glyfCount: 0,
-        twilightZone: nil,
-        glyphZone: nil,
-        unscaledOutlineIsWrong: false,
-        parBlock: &parBlock
-      )
-    }
+    try interp.runProgram(
+      fpgm: program.span,
+      prep: Span<UInt8>(),
+      glyf: Span<UInt8>(),
+      unscaledOutlineIsWrong: false,
+      parBlock: &parBlock
+    )
   }
 
   @Test func fixedPointDivisionToOdd() {

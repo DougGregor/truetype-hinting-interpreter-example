@@ -66,18 +66,13 @@ final class HintingTestInterface {
     do {
       let instructionStream: ContiguousArray<UInt8> = .init(instructions.flatMap(\.stream))
       var glyf: ContiguousArray<UInt8> = .init()
-      var twilight: TestZone?
-      var glyph: TestZone?
 
       switch program {
       case .fpgm:
         fpgm = instructionStream
       case .prep:
-        twilight = twilightZone
         prep = instructionStream
       case .glyf:
-        twilight = twilightZone
-        glyph = glyphZone
         glyf = instructionStream
       }
 
@@ -85,23 +80,32 @@ final class HintingTestInterface {
       // Parameter kept as non-optional to minimize dead code paths in production.
       var parBlock: fnt_ParameterBlock = .init()
 
-      try unsafe fpgm.withUnsafeBufferPointer { fpgmBuf in
-        try unsafe prep.withUnsafeBufferPointer { prepBuf in
-          try unsafe glyf.withUnsafeBufferPointer { glyfBuf in
-            try unsafe interpreter.runProgram(
-              fpgm: fpgmBuf.baseAddress,
-              fpgmCount: Int32(fpgmBuf.count),
-              prep: prepBuf.isEmpty ? nil : prepBuf.baseAddress,
-              prepCount: Int32(prepBuf.count),
-              glyf: glyfBuf.isEmpty ? nil : glyfBuf.baseAddress,
-              glyfCount: Int32(glyfBuf.count),
-              twilightZone: twilight?.element,
-              glyphZone: glyph?.element,
-              unscaledOutlineIsWrong: unscaledOutlineIsWrong,
-              parBlock: &parBlock
-            )
-          }
-        }
+      // Locals, so that spans over the programs are bounded by this scope.
+      let fpgm = self.fpgm
+      let prep = self.prep
+
+      switch program {
+      case .fpgm:
+        try interpreter.runProgram(
+          fpgm: fpgm.span, prep: prep.span, glyf: glyf.span,
+          unscaledOutlineIsWrong: unscaledOutlineIsWrong,
+          parBlock: &parBlock
+        )
+      case .prep:
+        try interpreter.runProgram(
+          fpgm: fpgm.span, prep: prep.span, glyf: glyf.span,
+          twilightZone: &twilightZone.element,
+          unscaledOutlineIsWrong: unscaledOutlineIsWrong,
+          parBlock: &parBlock
+        )
+      case .glyf:
+        try interpreter.runProgram(
+          fpgm: fpgm.span, prep: prep.span, glyf: glyf.span,
+          twilightZone: &twilightZone.element,
+          glyphZone: &glyphZone.element,
+          unscaledOutlineIsWrong: unscaledOutlineIsWrong,
+          parBlock: &parBlock
+        )
       }
     } catch {
       guard let failure else {
@@ -165,12 +169,11 @@ final class HintingTestInterface {
   }
 
   func setVariationCoord(_ coord: [CShort]) {
-    unsafe interpreter.setVariationCoord(coord, count: coord.count)
+    interpreter.setVariationCoord(coord.span)
   }
 
   func setNullVariationCoord(count: Int) {
-    // SAFETY: nil pointer is the expected way to clear the variation coordinate.
-    unsafe interpreter.setVariationCoord(nil, count: count)
+    interpreter.setNullVariationCoord(count: count)
   }
 
   func setScaleFactors(

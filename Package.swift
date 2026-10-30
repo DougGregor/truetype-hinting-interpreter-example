@@ -5,23 +5,14 @@ import PackageDescription
 let package = Package(
 	name: "SwiftTrueTypeInterpreter",
 	platforms: [
-		.macOS("26.0")
+		.macOS("27.0")
 	],
 	dependencies: [
-		.package(
-			url: "https://github.com/apple/swift-collections",
-			from: "1.6.0",
-			traits: [.defaults, .trait(name: "UnstableContainersPreview")]
-		),
 		.package(url: "https://github.com/ordo-one/benchmark", from: "1.27.0", traits: []),
 	],
 	targets: [
 		.target(
 			name: "SwiftTrueTypeInterpreter",
-			dependencies: [
-				.product(name: "BasicContainers", package: "swift-collections"),
-				.product(name: "ContainersPreview", package: "swift-collections"),
-			],
 			exclude: ["Private/Vendored/NOTICE.txt"],
 			swiftSettings: [
 				.enableExperimentalFeature("Lifetimes"),
@@ -31,7 +22,9 @@ let package = Package(
 		),
 		.testTarget(
 			name: "SwiftTrueTypeInterpreterTests",
-			dependencies: ["SwiftTrueTypeInterpreter"],
+			dependencies: [
+				"SwiftTrueTypeInterpreter",
+			],
 			swiftSettings: [
 				.swiftLanguageMode(.v6),
 				.strictMemorySafety(),
@@ -46,6 +39,7 @@ let package = Package(
 			path: "Benchmarks/GlyphHinting",
 			exclude: ["README.md"],
 			swiftSettings: [
+				.enableExperimentalFeature("Lifetimes"),
 				.swiftLanguageMode(.v6),
 				.strictMemorySafety(),
 			],

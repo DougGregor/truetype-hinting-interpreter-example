@@ -1,5 +1,3 @@
-internal import BasicContainers
-
 extension SwiftTrueTypeInterpreter {
   // 17/16 comes from the spec, turn it into a fixed point number transparently
   static let kDefaultControlValueCutIn: F26Dot6 = .init(bitPattern: 17 * (1 << F26Dot6.fractionBits) / 16)
@@ -18,7 +16,7 @@ extension SwiftTrueTypeInterpreter {
     /// Single width value used for regularizing distances.
     var singleWidthValue: ControlValue = .init(fUnits: 0)
 
-    private var rawValues: RigidArray<ControlValue>
+    private var rawValues: UniqueArray<ControlValue>
 
     /// Creates a new control value table with the specified capacity.
     ///
@@ -34,13 +32,26 @@ extension SwiftTrueTypeInterpreter {
       controlValueCutIn = 0
     }
 
+    /// Sets the control values from a span of `F26Dot6` bit patterns.
+    ///
+    /// - Parameter newValues: New control values to set
+    mutating func setValues(bitPatterns newValues: Span<Int32>) {
+      precondition(newValues.count == rawValues.count)
+      rawValues.removeAll()
+      for value in newValues {
+        rawValues.append(.init(fUnits: .init(bitPattern: value)))
+      }
+    }
+
     /// Sets the control values from a span of values.
     ///
     /// - Parameter newValues: New control values to set
-    mutating func setValues(_ newValues: Span<ControlValue>) {
-      assert(newValues.count == rawValues.count)
+    mutating func setValues(_ newValues: Span<F26Dot6>) {
+      precondition(newValues.count == rawValues.count)
       rawValues.removeAll()
-      rawValues.append(copying: newValues)
+      for value in newValues {
+        rawValues.append(.init(fUnits: value))
+      }
     }
 
     var values: [ControlValue] {

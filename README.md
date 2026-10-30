@@ -10,7 +10,7 @@ Published as a reference for writing high performance Swift.
 swift build
 ```
 
-Requires macOS 26.0 or later (Xcode 26 or later).
+Requires macOS 27.0 or later (Xcode 27 or later).
 
 ## Testing
 

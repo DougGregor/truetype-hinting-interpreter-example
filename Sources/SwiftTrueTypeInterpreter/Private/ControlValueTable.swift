@@ -36,7 +36,7 @@ extension SwiftTrueTypeInterpreter {
     ///
     /// - Parameter newValues: New control values to set
     mutating func setValues(bitPatterns newValues: Span<Int32>) {
-      assert(newValues.count == rawValues.count)
+      precondition(newValues.count == rawValues.count)
       rawValues.removeAll()
       for index in newValues.indices {
         rawValues.append(.init(fUnits: .init(bitPattern: newValues[index])))
@@ -47,7 +47,7 @@ extension SwiftTrueTypeInterpreter {
     ///
     /// - Parameter newValues: New control values to set
     mutating func setValues(_ newValues: Span<F26Dot6>) {
-      assert(newValues.count == rawValues.count)
+      precondition(newValues.count == rawValues.count)
       rawValues.removeAll()
       for index in newValues.indices {
         rawValues.append(.init(fUnits: newValues[index]))

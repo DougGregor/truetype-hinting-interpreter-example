@@ -38,8 +38,8 @@ extension SwiftTrueTypeInterpreter {
     mutating func setValues(bitPatterns newValues: Span<Int32>) {
       precondition(newValues.count == rawValues.count)
       rawValues.removeAll()
-      for index in newValues.indices {
-        rawValues.append(.init(fUnits: .init(bitPattern: newValues[index])))
+      for value in newValues {
+        rawValues.append(.init(fUnits: .init(bitPattern: value)))
       }
     }
 
@@ -49,8 +49,8 @@ extension SwiftTrueTypeInterpreter {
     mutating func setValues(_ newValues: Span<F26Dot6>) {
       precondition(newValues.count == rawValues.count)
       rawValues.removeAll()
-      for index in newValues.indices {
-        rawValues.append(.init(fUnits: newValues[index]))
+      for value in newValues {
+        rawValues.append(.init(fUnits: value))
       }
     }
 

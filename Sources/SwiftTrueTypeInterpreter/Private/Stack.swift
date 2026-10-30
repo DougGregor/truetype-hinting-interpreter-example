@@ -58,7 +58,7 @@ extension SwiftTrueTypeInterpreter {
       }
       // Capacity is ensured above, so append through an `OutputSpan`, which has no growth path.
       items.edit { output in
-        bytes._forEach { byte in
+        for byte in bytes {
           output.append(StackElement(byte))
         }
       }

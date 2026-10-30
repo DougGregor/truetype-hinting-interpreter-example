@@ -255,8 +255,8 @@ public class SwiftTrueTypeInterpreter {
     if variationCoord.capacity < coords.count {
       variationCoord.setCapacity(coords.count)
     }
-    for index in coords.indices {
-      variationCoord.append(F2Dot14(bitPattern: coords[index]))
+    for coord in coords {
+      variationCoord.append(F2Dot14(bitPattern: coord))
     }
   }
 
@@ -942,8 +942,11 @@ public class SwiftTrueTypeInterpreter {
       var coords = UniqueArray<F2Dot14>(capacity: 0)
       swap(&state.variationCoord, &coords)
       defer { swap(&coords, &state.variationCoord) }
-      try coords.span._forEach { coord throws(InterpreterError) in
-        try state.stack.push(.init(Int32(coord.bitPattern)))
+      do {
+        let span = coords.span
+        for coord in span {
+          try state.stack.push(.init(Int32(coord.bitPattern)))
+        }
       }
     } else {
       assert(instruction == Opcode.GETVARIATION.rawValue)

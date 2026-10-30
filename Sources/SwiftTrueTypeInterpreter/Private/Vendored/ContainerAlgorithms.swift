@@ -16,8 +16,8 @@ extension RangeReplaceableCollection {
 	/*public*/ init(copying source: borrowing Span<Element>) {
 		self.init()
 		self.reserveCapacity(source.count)
-		for index in source.indices {
-			self.append(source[index])
+		for element in source {
+			self.append(element)
 		}
 	}
 }
